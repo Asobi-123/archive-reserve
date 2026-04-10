@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Archive Reserve</title>
+    <link rel="stylesheet" href="/api/plugins/archive-reserve/static/style.css">
+</head>
+<body>
+    <div class="page-shell">
+        <header class="hero">
+            <div>
+                <p class="eyebrow">Archive Reserve / 档案保险库</p>
+                <p class="hero-kicker">整包备份、跨设备恢复、按路径覆盖。</p>
+                <p class="hero-copy">每次备份直接打包整个 <code>data/</code>。恢复时可以整包替换，也可以只拿某几个文件夹或文件回来。</p>
+            </div>
+            <div class="hero-badge">
+                <span id="status-pill" class="status-pill">准备中</span>
+                <p id="status-text" class="status-text">正在读取配置</p>
+                <div id="progress-panel" class="progress-panel hidden" aria-hidden="true">
+                    <div class="progress-copy">
+                        <span id="progress-label" class="progress-label"></span>
+                        <span id="progress-percent" class="progress-percent"></span>
+                    </div>
+                    <div class="progress-track">
+                        <div id="progress-fill" class="progress-fill"></div>
+                    </div>
+                    <p id="progress-detail" class="progress-detail"></p>
+                </div>
+            </div>
+        </header>
+
+        <nav class="ar-tabs" aria-label="主模块">
+            <button type="button" class="ar-tab" data-ar-tab="create">创建备份</button>
+            <button type="button" class="ar-tab" data-ar-tab="library">档案库</button>
+            <button type="button" class="ar-tab" data-ar-tab="maintenance">维护</button>
+            <button type="button" class="ar-tab" data-ar-tab="config">仓库设置</button>
+        </nav>
+
+        <main class="tab-layout">
+            <section class="panel tab-page" data-ar-page="config">
+                <div class="panel-head">
+                    <h2>仓库设置</h2>
+                    <p>支持 <code>owner/repo</code> 或完整 GitHub 链接。其余设置都是可选增强。</p>
+                </div>
+                <form id="config-form" class="form-grid">
+                    <label class="field">
+                        <span>GitHub 仓库</span>
+                        <input id="repo-input" name="repo" type="text" placeholder="yourname/sillytavern-backups" required>
+                    </label>
+                    <label class="field">
+                        <span>GitHub Token</span>
+                        <input id="token-input" name="token" type="password" placeholder="留空则保留已保存的 token">
+                        <small id="token-hint" class="field-hint"></small>
+                    </label>
+                    <label class="field">
+                        <span>当前设备名</span>
+                        <input id="device-name-input" name="deviceName" type="text" placeholder="例如 MacBook-Air">
+                    </label>
+                    <label class="field field-wide toggle-field">
+                        <span>自动定时备份</span>
+                        <label class="toggle-inline">
+                            <input id="auto-backup-enabled-input" name="autoBackupEnabled" type="checkbox">
+                            <span>启用自动定时备份</span>
+                        </label>
+                        <small class="field-hint">不开也完全能用。开了以后，只要酒馆在运行，就会按间隔自动做一次完整备份。</small>
+                    </label>
+                    <label class="field">
+                        <span>自动备份间隔</span>
+                        <select id="auto-backup-interval-input" name="autoBackupIntervalMinutes">
+                            <option value="60">1 小时</option>
+                            <option value="120">2 小时</option>
+                            <option value="240" selected>4 小时</option>
+                            <option value="360">6 小时</option>
+                            <option value="720">12 小时</option>
+                            <option value="1440">24 小时</option>
+                        </select>
+                    </label>
+                    <label class="field">
+                        <span>保留最近 N 个自动档案</span>
+                        <input id="auto-backup-keep-input" name="autoBackupKeepCount" type="number" min="1" max="200" step="1" placeholder="12">
+                    </label>
+                    <label class="field">
+                        <span>保留最近 N 个手动档案</span>
+                        <input id="manual-backup-keep-input" name="manualBackupKeepCount" type="number" min="0" max="200" step="1" placeholder="0">
+                        <small class="field-hint">填 0 表示不限。只会清当前设备的手动档案。</small>
+                    </label>
+                    <div class="field field-wide">
+                        <span>界面主题</span>
+                        <div class="theme-grid" id="theme-grid">
+                            <button type="button" class="theme-btn" data-theme-id="sand">
+                                <span class="theme-swatch" style="--swatch:#a2402a"></span>
+                                <span class="theme-label">暖砂</span>
+                            </button>
+                            <button type="button" class="theme-btn" data-theme-id="ocean">
+                                <span class="theme-swatch" style="--swatch:#2f6f9f"></span>
+                                <span class="theme-label">海蓝</span>
+                            </button>
+                            <button type="button" class="theme-btn" data-theme-id="sage">
+                                <span class="theme-swatch" style="--swatch:#4e7b6a"></span>
+                                <span class="theme-label">雾松</span>
+                            </button>
+                            <button type="button" class="theme-btn" data-theme-id="slate">
+                                <span class="theme-swatch" style="--swatch:#58636d"></span>
+                                <span class="theme-label">石墨</span>
+                            </button>
+                            <button type="button" class="theme-btn" data-theme-id="mocha">
+                                <span class="theme-swatch" style="--swatch:#c09070"></span>
+                                <span class="theme-label">摩卡</span>
+                            </button>
+                            <button type="button" class="theme-btn" data-theme-id="rose">
+                                <span class="theme-swatch" style="--swatch:#d28faf"></span>
+                                <span class="theme-label">玫夜</span>
+                            </button>
+                            <button type="button" class="theme-btn" data-theme-id="midnight">
+                                <span class="theme-swatch" style="--swatch:#69b8ff"></span>
+                                <span class="theme-label">深海</span>
+                            </button>
+                        </div>
+                        <small class="field-hint">只改档案保险库自己的面板配色，不改酒馆本体主题。</small>
+                    </div>
+                    <div class="field field-wide">
+                        <small id="auto-backup-status" class="field-hint"></small>
+                    </div>
+                    <div class="field actions">
+                        <button id="save-config-btn" class="btn btn-primary" type="submit">保存设置</button>
+                    </div>
+                </form>
+            </section>
+
+            <section class="panel tab-page" data-ar-page="create">
+                <div class="panel-head">
+                    <h2>创建备份</h2>
+                    <p>默认打包当前用户目录。无需勾选备份范围。</p>
+                </div>
+                <p id="backup-root-hint" class="panel-hint"></p>
+                <form id="backup-form" class="form-grid">
+                    <label class="field">
+                        <span>备份名</span>
+                        <input id="backup-name-input" name="name" type="text" placeholder="不填就自动生成时间名">
+                    </label>
+                    <label class="field field-wide">
+                        <span>备注</span>
+                        <textarea id="backup-note-input" name="note" rows="3" placeholder="可选，用来写这个备份是做什么的"></textarea>
+                    </label>
+                    <div class="field actions">
+                        <button id="create-backup-btn" class="btn btn-primary" type="submit">创建整包备份</button>
+                    </div>
+                </form>
+            </section>
+
+            <section class="panel tab-page" data-ar-page="maintenance">
+                <div class="panel-head">
+                    <div>
+                        <h2>维护</h2>
+                        <p>查看仓库占用，手动回收孤儿分块，检查快照健康。</p>
+                    </div>
+                    <div class="toolbar">
+                        <button id="refresh-space-btn" class="btn btn-secondary" type="button">刷新空间</button>
+                        <button id="run-gc-btn" class="btn btn-secondary" type="button">立即回收</button>
+                    </div>
+                </div>
+                <div id="space-stats" class="space-stats panel-scroll-area">
+                    <div class="empty-state">点击“刷新空间”查看当前仓库占用。</div>
+                </div>
+            </section>
+
+            <section class="panel panel-wide tab-page" data-ar-page="library">
+                <div class="panel-head">
+                    <div>
+                        <h2>档案库</h2>
+                        <p>同一仓库里的所有设备档案都会列在这里。可按设备筛选。</p>
+                    </div>
+                </div>
+                <details class="toolbar-drawer" open>
+                    <summary class="toolbar-summary">搜索与筛选</summary>
+                    <div class="toolbar toolbar-drawer-body">
+                        <label class="toolbar-field toolbar-search">
+                            <span>档案搜索</span>
+                            <input id="backup-search-input" type="search" placeholder="搜索名称、备注或设备">
+                        </label>
+                        <label class="toolbar-field">
+                            <span>设备筛选</span>
+                            <select id="device-filter"></select>
+                        </label>
+                        <button id="refresh-btn" class="btn btn-secondary" type="button">刷新列表</button>
+                    </div>
+                </details>
+                <div id="backup-search-meta" class="backup-search-meta"></div>
+                <div id="backup-list" class="backup-list panel-scroll-area"></div>
+            </section>
+        </main>
+    </div>
+
+    <div id="restore-modal" class="modal hidden" aria-hidden="true">
+        <div class="modal-backdrop" data-close-modal="true"></div>
+        <div class="modal-card">
+            <div class="modal-head">
+                <div>
+                    <p class="eyebrow">按路径恢复</p>
+                    <h3 id="modal-title">选择要恢复的路径</h3>
+                </div>
+                <button id="close-modal-btn" class="icon-btn" type="button" aria-label="关闭">×</button>
+            </div>
+
+            <div class="modal-copy">
+                <p>“合并恢复” 会把选中的文件覆盖到本地，但保留本地其它内容。</p>
+                <p>“严格覆盖” 会先删掉你选中的那些路径，再按备份内容重建。</p>
+            </div>
+
+            <div class="restore-mode">
+                <label>
+                    <input type="radio" name="restoreMode" value="merge" checked>
+                    <span>合并恢复</span>
+                </label>
+                <label>
+                    <input type="radio" name="restoreMode" value="replace">
+                    <span>严格覆盖</span>
+                </label>
+            </div>
+
+            <div class="modal-actions-row">
+                <label class="tree-search-field">
+                    <span>搜索路径</span>
+                    <input id="tree-search-input" type="search" placeholder="输入文件夹名或文件名">
+                </label>
+                <div class="modal-actions-group">
+                    <button id="check-all-btn" class="btn btn-secondary" type="button">全选</button>
+                    <button id="clear-all-btn" class="btn btn-secondary" type="button">清空</button>
+                </div>
+            </div>
+
+            <div id="tree-search-meta" class="tree-search-meta"></div>
+            <div id="tree-meta" class="tree-meta"></div>
+            <div id="restore-tree" class="restore-tree"></div>
+
+            <div class="modal-footer">
+                <button id="confirm-restore-btn" class="btn btn-primary" type="button">开始恢复</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="toast-host" class="toast-host"></div>
+
+    <script src="/api/plugins/archive-reserve/static/app.js" defer></script>
+</body>
+</html>
