@@ -13,6 +13,9 @@ It stores backups in GitHub Releases and provides:
 - backup health check
 - space stats and manual cleanup
 
+It is inspired by existing cloud backup plugins,
+but implemented using a different architecture based on GitHub Releases and hidden chunk storage.
+
 Repository:
 
 - `https://github.com/Asobi-123/archive-reserve`

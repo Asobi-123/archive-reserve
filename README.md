@@ -13,6 +13,9 @@ Archive Reserve 是一个给 SillyTavern 使用的完整数据备份 server plug
 - 档案健康检查
 - 空间统计与手动回收
 
+它的设计灵感来自现有的云备份类插件，
+但当前实现使用的是不同的架构：基于 GitHub Releases 与隐藏分块存储。
+
 官方仓库：
 
 - `https://github.com/Asobi-123/archive-reserve`
