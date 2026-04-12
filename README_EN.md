@@ -211,6 +211,57 @@ SillyTavern/plugins/archive-reserve/public/index.html
 
 If those files are present, `npm install` completed, and `config.yaml` enables server plugins, the install is usually correct.
 
+## Updating The Plugin
+
+If you already installed `Archive Reserve` and want to update it, use the same method you originally used to install it.
+
+### If you originally installed with git clone
+
+1. Go to:
+
+```text
+SillyTavern/plugins/archive-reserve
+```
+
+2. Open a terminal in that folder.
+3. Run:
+
+```bash
+git pull
+npm install
+```
+
+4. Restart SillyTavern.
+
+### If you originally installed from ZIP
+
+1. Download the latest ZIP from GitHub.
+2. Extract it.
+3. Replace the old folder at:
+
+```text
+SillyTavern/plugins/archive-reserve
+```
+
+4. Open a terminal in that folder.
+5. Run again:
+
+```bash
+npm install
+```
+
+6. Restart SillyTavern.
+
+### How To Confirm The Update
+
+Open:
+
+```text
+http://127.0.0.1:8000/api/plugins/archive-reserve/ui
+```
+
+If the page opens normally, the update is usually in place.
+
 ## UI Entry
 
 Default URL:

@@ -211,6 +211,57 @@ SillyTavern/plugins/archive-reserve/public/index.html
 
 如果这些文件都在，`npm install` 也执行过，而且 `config.yaml` 已经打开 server plugin，通常就没问题。
 
+## 更新插件
+
+如果你已经装过 `Archive Reserve`，想更新到最新版，按你当初的安装方式来就行。
+
+### 如果你当初是用 git clone 安装的
+
+1. 找到：
+
+```text
+SillyTavern/plugins/archive-reserve
+```
+
+2. 打开终端，进入这个文件夹。
+3. 执行：
+
+```bash
+git pull
+npm install
+```
+
+4. 重启 SillyTavern。
+
+### 如果你当初是下载 ZIP 安装的
+
+1. 去 GitHub 重新下载最新版压缩包。
+2. 解压。
+3. 把新的 `archive-reserve` 文件夹覆盖到：
+
+```text
+SillyTavern/plugins/archive-reserve
+```
+
+4. 打开终端，进入这个文件夹。
+5. 再执行一次：
+
+```bash
+npm install
+```
+
+6. 重启 SillyTavern。
+
+### 更新后怎么确认
+
+打开插件页面：
+
+```text
+http://127.0.0.1:8000/api/plugins/archive-reserve/ui
+```
+
+如果页面能正常打开，通常就说明更新已经生效。
+
 ## 插件入口
 
 默认地址：
