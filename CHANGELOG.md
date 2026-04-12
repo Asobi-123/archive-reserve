@@ -7,6 +7,15 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-04-12
+
+### Changed
+
+- Reduced first-open pressure in the standalone UI by removing automatic space-stat loading during bootstrap.
+- Archive list loading is now deferred to the archive library tab instead of running unconditionally on page open.
+- The maintenance page now starts in a lightweight default state and only performs deep repository space statistics when the user explicitly refreshes it.
+- Backup creation and backup deletion no longer immediately trigger a background space-stat refresh, so heavy maintenance scans are less likely to stack on top of other operations.
+
 ## [0.1.0] - 2026-04-10
 
 First public repository preparation.

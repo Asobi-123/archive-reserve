@@ -5,6 +5,9 @@ const THEME_STATE_KEY = 'archive-reserve.theme.v1';
 const state = {
     config: null,
     backups: [],
+    backupsLoaded: false,
+    backupsLoading: false,
+    backupsError: '',
     configured: false,
     currentOperation: '',
     currentProgress: null,
@@ -17,6 +20,8 @@ const state = {
     backupRootLabel: '',
     autoBackup: null,
     spaceStats: null,
+    spaceStatsState: 'idle',
+    spaceStatsError: '',
     modal: {
         releaseId: null,
         backup: null,
@@ -87,7 +92,7 @@ function bindEvents() {
     elements.configForm.addEventListener('submit', onSaveConfig);
     elements.backupForm.addEventListener('submit', onCreateBackup);
     elements.refreshButton.addEventListener('click', () => {
-        void loadBackups();
+        void refreshBackupsWithFeedback();
     });
     elements.refreshSpaceButton.addEventListener('click', () => {
         void refreshSpaceStatsWithFeedback();
@@ -134,8 +139,7 @@ async function bootstrap() {
     try {
         await ensureCsrfToken();
         await loadConfig();
-        await loadBackups();
-        await loadSpaceStats(true);
+        await ensureActiveTabData();
     } catch (error) {
         showToast(error.message || '初始化失败', 'error');
         setStatus(error.message || '初始化失败', false);
@@ -198,10 +202,11 @@ function writeActiveTab(tabId) {
 }
 
 function initializeTabState() {
-    setActiveTab(readActiveTab());
+    setActiveTab(readActiveTab(), { skipLoad: true });
 }
 
-function setActiveTab(tabId) {
+function setActiveTab(tabId, options = {}) {
+    const { skipLoad = false } = options;
     const target = tabId || 'library';
     state.activeTab = target;
     elements.tabButtons.forEach((button) => {
@@ -211,6 +216,9 @@ function setActiveTab(tabId) {
         page.classList.toggle('active', page.dataset.arPage === target);
     });
     writeActiveTab(target);
+    if (!skipLoad) {
+        void ensureActiveTabData();
+    }
 }
 
 function openTabForAction(tabId) {
@@ -219,6 +227,22 @@ function openTabForAction(tabId) {
     }
     if (state.activeTab !== tabId) {
         setActiveTab(tabId);
+    }
+}
+
+async function ensureActiveTabData() {
+    try {
+        if (state.activeTab === 'library') {
+            await ensureBackupsLoaded();
+            return;
+        }
+
+        if (state.activeTab === 'maintenance') {
+            renderSpaceStats();
+        }
+    } catch (error) {
+        showToast(error.message || '读取档案库失败', 'error');
+        setStatus(error.message || '读取档案库失败', false);
     }
 }
 
@@ -276,12 +300,21 @@ function showToast(message, type = 'default') {
 }
 
 async function loadSpaceStats(quiet = false) {
+    state.spaceStatsState = 'loading';
+    state.spaceStatsError = '';
+    renderSpaceStats();
+
     try {
         const result = await apiRequest('/maintenance/space');
         state.spaceStats = result.stats || null;
+        state.spaceStatsState = 'loaded';
         renderSpaceStats();
         return true;
     } catch (error) {
+        state.spaceStats = null;
+        state.spaceStatsState = 'error';
+        state.spaceStatsError = error.message || '读取空间统计失败';
+        renderSpaceStats();
         if (!quiet) {
             showToast(error.message || '读取空间统计失败', 'error');
         }
@@ -309,8 +342,35 @@ async function refreshSpaceStatsWithFeedback() {
 
 function renderSpaceStats() {
     const stats = state.spaceStats;
+    if (!state.configured) {
+        elements.spaceStats.innerHTML = '<div class="empty-state">先保存 GitHub 仓库设置，再查看维护数据。</div>';
+        return;
+    }
+
+    if (state.spaceStatsState === 'loading') {
+        elements.spaceStats.innerHTML = '<div class="empty-state">正在读取空间统计，请稍等。</div>';
+        return;
+    }
+
+    if (state.spaceStatsState === 'error') {
+        elements.spaceStats.innerHTML = `
+            <div class="empty-state">
+                <strong>读取空间统计失败</strong>
+                <p>${escapeHtml(state.spaceStatsError || '请稍后重试。')}</p>
+                <p>可以再次点击“刷新空间”重试。</p>
+            </div>
+        `;
+        return;
+    }
+
     if (!stats) {
-        elements.spaceStats.innerHTML = '<div class="empty-state">点击“刷新空间”查看当前仓库占用。</div>';
+        elements.spaceStats.innerHTML = `
+            <div class="empty-state">
+                <strong>维护页默认不自动深扫仓库</strong>
+                <p>点击“刷新空间”后，才会统计当前仓库占用、有效引用和可回收分块。</p>
+                <p>这样可以减少页面初次打开时的额外内存和网络压力。</p>
+            </div>
+        `;
         return;
     }
 
@@ -341,6 +401,13 @@ function renderSpaceStats() {
     `;
 }
 
+function invalidateSpaceStats() {
+    state.spaceStats = null;
+    state.spaceStatsState = 'idle';
+    state.spaceStatsError = '';
+    renderSpaceStats();
+}
+
 async function runManualGc() {
     openTabForAction('maintenance');
     if (isBusy()) {
@@ -354,7 +421,10 @@ async function runManualGc() {
             method: 'POST',
         });
         await loadSpaceStats(true);
-        await loadBackups();
+        state.backupsLoaded = false;
+        if (state.activeTab === 'library') {
+            await loadBackups();
+        }
         showToast(`已回收 ${result.result.deletedCount} 个分块，释放 ${formatBytes(result.result.deletedBytes || 0)}`, 'success');
     } catch (error) {
         if (isBusyError(error)) {
@@ -433,6 +503,13 @@ async function loadConfig() {
     state.currentProgress = result.status?.progress || null;
     state.backupRootLabel = result.status?.backupRootLabel || '';
     state.autoBackup = result.status?.autoBackup || null;
+    state.backups = [];
+    state.backupsLoaded = false;
+    state.backupsLoading = false;
+    state.backupsError = '';
+    state.spaceStats = null;
+    state.spaceStatsState = 'idle';
+    state.spaceStatsError = '';
 
     elements.repoInput.value = result.config.repo || '';
     elements.deviceNameInput.value = result.config.deviceName || '';
@@ -456,29 +533,73 @@ async function loadConfig() {
     } else {
         setStatus('先把仓库和 token 填好', false);
     }
-}
-
-async function loadBackups() {
-    const result = await apiRequest('/backups');
-    state.backups = result.backups || [];
-    state.configured = Boolean(result.configured);
-    state.currentOperation = result.currentOperation || '';
-    state.currentProgress = result.progress || null;
 
     renderDeviceFilter();
     renderBackupList();
+    renderSpaceStats();
+}
 
-    if (state.currentOperation) {
-        setStatus(state.currentOperation, true);
+async function ensureBackupsLoaded() {
+    if (!state.configured || state.backupsLoaded || state.backupsLoading) {
+        renderBackupList();
         return;
     }
 
-    if (!state.configured) {
-        setStatus('先把仓库和 token 填好', false);
+    await loadBackups();
+}
+
+async function loadBackups() {
+    if (state.backupsLoading) {
         return;
     }
 
-    setStatus(`已加载 ${state.backups.length} 个备份`, false);
+    state.backupsLoading = true;
+    state.backupsError = '';
+    renderBackupList();
+
+    try {
+        const result = await apiRequest('/backups');
+        state.backups = result.backups || [];
+        state.configured = Boolean(result.configured);
+        state.currentOperation = result.currentOperation || '';
+        state.currentProgress = result.progress || null;
+        state.backupsLoaded = state.configured;
+        state.backupsError = '';
+
+        renderDeviceFilter();
+        renderBackupList();
+
+        if (state.currentOperation) {
+            setStatus(state.currentOperation, true);
+            return;
+        }
+
+        if (!state.configured) {
+            setStatus('先把仓库和 token 填好', false);
+            return;
+        }
+
+        setStatus(`已加载 ${state.backups.length} 个备份`, false);
+    } catch (error) {
+        state.backupsLoaded = false;
+        state.backupsError = error.message || '读取档案库失败';
+        renderDeviceFilter();
+        renderBackupList();
+        throw error;
+    } finally {
+        state.backupsLoading = false;
+        renderBackupList();
+    }
+}
+
+async function refreshBackupsWithFeedback() {
+    openTabForAction('library');
+    try {
+        await loadBackups();
+    } catch (error) {
+        showToast(error.message || '读取档案库失败', 'error');
+        setStatus(error.message || '读取档案库失败', false);
+    }
 }
 
 async function loadStatus() {
@@ -492,6 +613,11 @@ async function loadStatus() {
 }
 
 function renderDeviceFilter() {
+    if (!state.backupsLoaded) {
+        elements.deviceFilter.innerHTML = '<option value="all">全部设备</option>';
+        return;
+    }
+
     const devices = new Map();
     for (const backup of state.backups) {
         devices.set(backup.device.id, backup.device.name);
@@ -536,6 +662,20 @@ function renderBackupList() {
     if (!state.configured) {
         elements.backupSearchMeta.textContent = '';
         elements.backupList.innerHTML = '<div class="empty-state">还没有配置 GitHub 仓库。</div>';
+        return;
+    }
+
+    if (state.backupsLoading) {
+        elements.backupSearchMeta.textContent = '';
+        elements.backupList.innerHTML = '<div class="empty-state">正在读取档案库，请稍等。</div>';
+        return;
+    }
+
+    if (!state.backupsLoaded) {
+        elements.backupSearchMeta.textContent = '';
+        elements.backupList.innerHTML = state.backupsError
+            ? `<div class="empty-state">读取档案库失败：${escapeHtml(state.backupsError)}。可以点击“刷新列表”重试。</div>`
+            : '<div class="empty-state">进入档案库后才会加载备份列表。</div>';
         return;
     }
 
@@ -642,6 +782,10 @@ async function refreshOperationState() {
         try {
             await loadBackups();
         } catch (error) {
+            state.backupsLoading = false;
+            state.backupsLoaded = false;
+            state.backupsError = error.message || '刷新备份列表失败';
+            renderBackupList();
             console.error('刷新备份列表失败', error);
             setStatus('操作已结束，但刷新列表失败。点“刷新列表”重试。', false);
             showToast(error.message || '刷新备份列表失败', 'error');
@@ -712,7 +856,9 @@ async function onSaveConfig(event) {
         });
 
         await loadConfig();
-        await loadBackups();
+        if (state.activeTab === 'library') {
+            await loadBackups();
+        }
         showToast('设置已保存', 'success');
     } catch (error) {
         if (isBusyError(error)) {
@@ -748,8 +894,13 @@ async function onCreateBackup(event) {
         elements.backupNameInput.value = '';
         elements.backupNoteInput.value = '';
         await loadConfig();
-        await loadBackups();
-        await loadSpaceStats(true);
+        state.backupsLoaded = false;
+        if (state.activeTab === 'library') {
+            await loadBackups();
+        } else {
+            renderBackupList();
+        }
+        invalidateSpaceStats();
         showToast('备份已创建', 'success');
     } catch (error) {
         if (isBusyError(error)) {
@@ -881,8 +1032,13 @@ async function onBackupListClick(event) {
             await apiRequest(`/backups/${releaseId}`, {
                 method: 'DELETE',
             });
-            await loadBackups();
-            await loadSpaceStats(true);
+            state.backupsLoaded = false;
+            if (state.activeTab === 'library') {
+                await loadBackups();
+            } else {
+                renderBackupList();
+            }
+            invalidateSpaceStats();
             showToast('备份已删除', 'success');
         } catch (error) {
             if (isBusyError(error)) {

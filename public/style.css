@@ -691,6 +691,16 @@ select:focus {
     background: color-mix(in srgb, var(--field) 56%, transparent);
 }
 
+.empty-state strong {
+    display: block;
+    margin-bottom: 10px;
+    color: var(--ink);
+}
+
+.empty-state p {
+    margin: 8px 0 0;
+}
+
 .modal.hidden {
     display: none;
 }

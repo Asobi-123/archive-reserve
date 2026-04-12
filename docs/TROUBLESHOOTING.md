@@ -19,6 +19,11 @@ The UI entry is:
 
 This plugin is a server plugin page, not a normal extension drawer entry.
 
+Also note:
+
+- newer builds no longer auto-run deep maintenance space statistics on first page load
+- if a low-memory environment still struggles, avoid opening `维护` and immediately pressing `刷新空间` before confirming the page itself is stable
+
 ## "ForbiddenError: Invalid CSRF token"
 
 Refresh the page, then try again.
