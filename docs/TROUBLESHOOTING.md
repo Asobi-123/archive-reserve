@@ -110,6 +110,18 @@ Check these points:
 
 If health check reports missing chunk assets, that backup is incomplete and must be recreated from a healthy device.
 
+## Extension Update Detection Stops Working After Restore
+
+Check these points:
+
+- whether the affected extension lives under `data/default-user/extensions/<name>`
+- whether that extension was originally installed as a Git repository
+- whether the backup was created with Archive Reserve `v0.1.2` or later
+
+Starting from `v0.1.2`, Archive Reserve preserves `extensions/<name>/.git` metadata in backup, download, and restore flows.
+
+If the extension was restored from an older backup that did not include its Git metadata, reinstall that extension once so its `.git` directory is recreated.
+
 ## Auto Backup Does Not Run
 
 Check these points:

@@ -14,7 +14,7 @@ const info = {
     id: 'archive-reserve',
     name: 'Archive Reserve',
     description: '完整打包 SillyTavern data，并存入 GitHub Releases，支持整包或按路径恢复。',
-    version: '0.1.1',
+    version: '0.1.2',
 };
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -50,22 +50,6 @@ const RETRYABLE_FETCH_ERROR_CODES = new Set([
 ]);
 const IGNORED_FILE_NAMES = new Set(['.gitkeep', '.DS_Store', 'Thumbs.db']);
 const IGNORED_DIRECTORY_NAMES = new Set(['.git']);
-const ARCHIVE_IGNORE_PATTERNS = [
-    '.git',
-    '**/.git',
-    '.git/**',
-    '**/.git/**',
-    '.archive-reserve',
-    '**/.archive-reserve',
-    '.archive-reserve/**',
-    '**/.archive-reserve/**',
-    '.gitkeep',
-    '**/.gitkeep',
-    '.DS_Store',
-    '**/.DS_Store',
-    'Thumbs.db',
-    '**/Thumbs.db',
-];
 
 const DEFAULT_CONFIG = {
     repo: '',
@@ -418,10 +402,31 @@ function ensureConfigured(config) {
     }
 }
 
-function shouldIgnoreEntryName(name, isDirectory = false) {
+function normalizePathParts(relativePath = '') {
+    return String(relativePath)
+        .replace(/\\/g, '/')
+        .split('/')
+        .filter(Boolean);
+}
+
+function isAllowedExtensionGitPath(relativePath = '') {
+    const parts = normalizePathParts(relativePath);
+    return parts.length >= 3
+        && parts[0] === 'extensions'
+        && parts[2] === '.git';
+}
+
+function shouldIgnoreRelativePath(relativePath, isDirectory = false) {
+    const parts = normalizePathParts(relativePath);
+    const name = parts[parts.length - 1] || '';
+
     if (isDirectory) {
-        return IGNORED_DIRECTORY_NAMES.has(name);
+        if (name !== '.git') {
+            return IGNORED_DIRECTORY_NAMES.has(name);
+        }
+        return !isAllowedExtensionGitPath(relativePath);
     }
+
     return IGNORED_FILE_NAMES.has(name);
 }
 
@@ -459,7 +464,7 @@ async function removeIfExists(relativePath) {
 async function clearDataDirectory() {
     const entries = await fsp.readdir(BACKUP_DIR, { withFileTypes: true });
     for (const entry of entries) {
-        if (shouldIgnoreEntryName(entry.name, entry.isDirectory())) {
+        if (shouldIgnoreRelativePath(entry.name, entry.isDirectory())) {
             continue;
         }
         await fsp.rm(path.join(BACKUP_DIR, entry.name), { recursive: true, force: true });
@@ -502,17 +507,17 @@ async function collectDataEntries() {
         const dirEntries = sortDirEntries(await fsp.readdir(currentAbsolutePath, { withFileTypes: true }));
 
         for (const dirEntry of dirEntries) {
-            if (shouldIgnoreEntryName(dirEntry.name, dirEntry.isDirectory())) {
+            const nextRelativePath = currentRelativePath
+                ? path.posix.join(currentRelativePath, dirEntry.name)
+                : dirEntry.name;
+
+            if (shouldIgnoreRelativePath(nextRelativePath, dirEntry.isDirectory())) {
                 continue;
             }
 
             if (dirEntry.isSymbolicLink()) {
                 continue;
             }
-
-            const nextRelativePath = currentRelativePath
-                ? path.posix.join(currentRelativePath, dirEntry.name)
-                : dirEntry.name;
 
             if (dirEntry.isDirectory()) {
                 directoryCount += 1;
@@ -552,6 +557,43 @@ async function collectDataEntries() {
             rawBytes,
         },
     };
+}
+
+async function listArchivableFiles(sourceDir) {
+    const files = [];
+
+    async function walk(currentRelativePath = '') {
+        const currentAbsolutePath = resolveRootedPath(sourceDir, currentRelativePath);
+        const dirEntries = sortDirEntries(await fsp.readdir(currentAbsolutePath, { withFileTypes: true }));
+
+        for (const dirEntry of dirEntries) {
+            const nextRelativePath = currentRelativePath
+                ? path.posix.join(currentRelativePath, dirEntry.name)
+                : dirEntry.name;
+
+            if (shouldIgnoreRelativePath(nextRelativePath, dirEntry.isDirectory())) {
+                continue;
+            }
+
+            if (dirEntry.isSymbolicLink()) {
+                continue;
+            }
+
+            if (dirEntry.isDirectory()) {
+                await walk(nextRelativePath);
+                continue;
+            }
+
+            if (!dirEntry.isFile()) {
+                continue;
+            }
+
+            files.push(nextRelativePath);
+        }
+    }
+
+    await walk('');
+    return files;
 }
 
 function getChunkRootPath(relativePath) {
@@ -656,6 +698,7 @@ function createHashingTransform() {
 
 async function createArchiveFromDirectory(sourceDir, outputPath) {
     await ensureDirectoryExists(path.dirname(outputPath));
+    const fileEntries = await listArchivableFiles(sourceDir);
 
     return await new Promise((resolve, reject) => {
         const output = fs.createWriteStream(outputPath);
@@ -674,11 +717,9 @@ async function createArchiveFromDirectory(sourceDir, outputPath) {
         });
 
         archive.pipe(hashing.stream).pipe(output);
-        archive.glob('**/*', {
-            cwd: sourceDir,
-            dot: true,
-            ignore: ARCHIVE_IGNORE_PATTERNS,
-        });
+        for (const fileEntry of fileEntries) {
+            archive.file(resolveRootedPath(sourceDir, fileEntry), { name: fileEntry });
+        }
         archive.finalize();
     });
 }

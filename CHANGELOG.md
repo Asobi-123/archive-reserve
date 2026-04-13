@@ -7,6 +7,13 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-13
+
+### Changed
+
+- Archive Reserve now preserves `extensions/<name>/.git` metadata in backup creation, backup download, and restore flows, so restored third-party extensions are more likely to remain compatible with SillyTavern's built-in extension update detection.
+- `.gitkeep` remains excluded, while extension Git metadata is handled through path-aware filtering instead of the previous blanket `.git` archive ignore rules.
+
 ## [0.1.1] - 2026-04-12
 
 ### Changed
