@@ -365,7 +365,7 @@ function renderSpaceStats() {
 
     if (!stats) {
         elements.spaceStats.innerHTML = `
-            <div class="empty-state">
+            <div class="space-empty-state">
                 <strong>维护页默认不自动深扫仓库</strong>
                 <p>点击“刷新空间”后，才会统计当前仓库占用、有效引用和可回收分块。</p>
                 <p>这样可以减少页面初次打开时的额外内存和网络压力。</p>
@@ -522,7 +522,7 @@ async function loadConfig() {
         ? `当前已保存 token：${result.config.tokenPreview}`
         : '当前还没有保存 token';
     elements.backupRootHint.textContent = state.backupRootLabel
-        ? `当前备份根目录：${state.backupRootLabel}。自动排除 .git / .gitkeep / .DS_Store。`
+        ? `当前备份根目录：${state.backupRootLabel}。自动排除 .gitkeep / .DS_Store；扩展目录的 .git 会一并保留。`
         : '';
     renderAutoBackupStatus();
 

@@ -205,36 +205,38 @@
                 <button id="close-modal-btn" class="icon-btn" type="button" aria-label="关闭">×</button>
             </div>
 
-            <div class="modal-copy">
-                <p>“合并恢复” 会把选中的文件覆盖到本地，但保留本地其它内容。</p>
-                <p>“严格覆盖” 会先删掉你选中的那些路径，再按备份内容重建。</p>
-            </div>
-
-            <div class="restore-mode">
-                <label>
-                    <input type="radio" name="restoreMode" value="merge" checked>
-                    <span>合并恢复</span>
-                </label>
-                <label>
-                    <input type="radio" name="restoreMode" value="replace">
-                    <span>严格覆盖</span>
-                </label>
-            </div>
-
-            <div class="modal-actions-row">
-                <label class="tree-search-field">
-                    <span>搜索路径</span>
-                    <input id="tree-search-input" type="search" placeholder="输入文件夹名或文件名">
-                </label>
-                <div class="modal-actions-group">
-                    <button id="check-all-btn" class="btn btn-secondary" type="button">全选</button>
-                    <button id="clear-all-btn" class="btn btn-secondary" type="button">清空</button>
+            <div class="modal-body">
+                <div class="modal-copy">
+                    <p>“合并恢复” 会把选中的文件覆盖到本地，但保留本地其它内容。</p>
+                    <p>“严格覆盖” 会先删掉你选中的那些路径，再按备份内容重建。</p>
                 </div>
-            </div>
 
-            <div id="tree-search-meta" class="tree-search-meta"></div>
-            <div id="tree-meta" class="tree-meta"></div>
-            <div id="restore-tree" class="restore-tree"></div>
+                <div class="restore-mode">
+                    <label>
+                        <input type="radio" name="restoreMode" value="merge" checked>
+                        <span>合并恢复</span>
+                    </label>
+                    <label>
+                        <input type="radio" name="restoreMode" value="replace">
+                        <span>严格覆盖</span>
+                    </label>
+                </div>
+
+                <div class="modal-actions-row">
+                    <label class="tree-search-field">
+                        <span>搜索路径</span>
+                        <input id="tree-search-input" type="search" placeholder="输入文件夹名或文件名">
+                    </label>
+                    <div class="modal-actions-group">
+                        <button id="check-all-btn" class="btn btn-secondary" type="button">全选</button>
+                        <button id="clear-all-btn" class="btn btn-secondary" type="button">清空</button>
+                    </div>
+                </div>
+
+                <div id="tree-search-meta" class="tree-search-meta"></div>
+                <div id="tree-meta" class="tree-meta"></div>
+                <div id="restore-tree" class="restore-tree"></div>
+            </div>
 
             <div class="modal-footer">
                 <button id="confirm-restore-btn" class="btn btn-primary" type="button">开始恢复</button>
