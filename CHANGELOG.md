@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-13
+
+### Changed
+
+- Reworked the selective restore modal for mobile so the header, body, tree list, and action area behave more like a usable bottom-sheet layout instead of pushing the tree to the bottom of the screen.
+- Reduced mobile UI scale across archive cards, maintenance cards, buttons, chips, form controls, tabs, and restore modal text so the panel feels denser and less oversized on phones.
+- Updated the backup-root hint copy to match the current behavior: `.gitkeep` and `.DS_Store` stay excluded, while extension `.git` metadata is preserved.
+
 ## [0.1.2] - 2026-04-13
 
 ### Changed
