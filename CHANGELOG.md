@@ -7,6 +7,15 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-04-27
+
+### Fixed
+
+- Backup retention now pre-clears one slot before creating a new archive, so repositories that already hit their archive cap are less likely to fail on the next upload before cleanup runs.
+- Retention matching now falls back to the current device name when a deployment keeps changing its device ID on restart, so automatic and manual keep-count rules can still recognize old archives from the same logical device.
+- Chunk upload conflict recovery now ignores unfinished or zero-byte same-name assets and retries the upload, reducing GitHub `Validation Failed` interruptions caused by stale release assets.
+- Desktop archive cards now auto-expand the secondary action area, so `Check`, `Download`, and `Delete` stay visible instead of disappearing behind a hidden collapsed menu.
+
 ## [0.1.3] - 2026-04-13
 
 ### Changed

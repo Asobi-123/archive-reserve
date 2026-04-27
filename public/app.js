@@ -132,6 +132,7 @@ function bindEvents() {
     elements.confirmRestoreButton.addEventListener('click', () => {
         void onConfirmSelectiveRestore();
     });
+    window.addEventListener('resize', syncBackupActionMenus);
 }
 
 async function bootstrap() {
@@ -716,7 +717,15 @@ function renderBackupList() {
             </div>
         </article>
     `).join('');
+    syncBackupActionMenus();
     syncInteractivity();
+}
+
+function syncBackupActionMenus() {
+    const desktop = window.innerWidth > 960;
+    elements.backupList.querySelectorAll('.backup-action-menu').forEach((menu) => {
+        menu.open = desktop;
+    });
 }
 
 function isBusy() {

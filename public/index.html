@@ -83,7 +83,7 @@
                     <label class="field">
                         <span>保留最近 N 个手动档案</span>
                         <input id="manual-backup-keep-input" name="manualBackupKeepCount" type="number" min="0" max="200" step="1" placeholder="0">
-                        <small class="field-hint">填 0 表示不限。只会清当前设备的手动档案。</small>
+                        <small class="field-hint">填 0 表示不限。会优先按当前设备 ID 清理；若设备 ID 漂移，也会按当前设备名兜底识别。</small>
                     </label>
                     <div class="field field-wide">
                         <span>界面主题</span>

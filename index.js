@@ -14,7 +14,7 @@ const info = {
     id: 'archive-reserve',
     name: 'Archive Reserve',
     description: '完整打包 SillyTavern data，并存入 GitHub Releases，支持整包或按路径恢复。',
-    version: '0.1.3',
+    version: '0.1.4',
 };
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -63,6 +63,8 @@ const DEFAULT_CONFIG = {
     manualBackupKeepCount: 0,
 };
 
+const UNKNOWN_DEVICE_NAME = 'unknown device';
+
 let currentOperation = null;
 let currentProgress = null;
 let autoBackupTimer = null;
@@ -86,6 +88,15 @@ function trimToEmpty(value) {
 
 function normalizeDeviceName(value) {
     return trimToEmpty(value) || getDefaultDeviceName();
+}
+
+function normalizeDeviceIdentityValue(value) {
+    return trimToEmpty(value).toLowerCase();
+}
+
+function hasMeaningfulDeviceName(value) {
+    const normalized = normalizeDeviceIdentityValue(value);
+    return normalized && normalized !== UNKNOWN_DEVICE_NAME;
 }
 
 function normalizeAutoBackupInterval(value) {
@@ -1349,6 +1360,66 @@ function buildChunkAssetPartPrefix(chunkId) {
     return `${buildChunkAssetBaseName(chunkId)}.part`;
 }
 
+function findReleaseAssetsByName(release, assetName) {
+    const assets = Array.isArray(release?.assets) ? release.assets : [];
+    return assets.filter((asset) => asset.name === assetName);
+}
+
+function isUploadedReleaseAsset(asset) {
+    const state = normalizeDeviceIdentityValue(asset?.state);
+    return !state || state === 'uploaded';
+}
+
+function getAssetDigestSha256(asset) {
+    const digest = trimToEmpty(asset?.digest);
+    return digest.startsWith('sha256:') ? digest.slice('sha256:'.length) : '';
+}
+
+function isMatchingUploadedAsset(asset, expectedPart) {
+    if (!asset || !expectedPart || !isUploadedReleaseAsset(asset)) {
+        return false;
+    }
+
+    if ((Number(asset.size) || 0) !== (Number(expectedPart.size) || 0)) {
+        return false;
+    }
+
+    const assetDigest = getAssetDigestSha256(asset);
+    return !assetDigest || !trimToEmpty(expectedPart.sha256) || assetDigest === expectedPart.sha256;
+}
+
+function isRecoverableConflictAsset(asset) {
+    if (!asset) {
+        return false;
+    }
+
+    if (!isUploadedReleaseAsset(asset)) {
+        return true;
+    }
+
+    return (Number(asset.size) || 0) <= 0;
+}
+
+async function deleteRecoverableConflictAssets(config, storeRelease, assetName) {
+    const sameNameAssets = findReleaseAssetsByName(storeRelease, assetName);
+    const recoverableAssets = sameNameAssets.filter(isRecoverableConflictAsset);
+
+    for (const asset of recoverableAssets) {
+        await deleteReleaseAsset(config, asset.id);
+    }
+
+    if (recoverableAssets.length > 0) {
+        storeRelease.assets = (storeRelease.assets || []).filter((asset) => asset.name !== assetName);
+    }
+
+    return recoverableAssets.length;
+}
+
+function findMismatchedUploadedAsset(storeRelease, expectedPart) {
+    return findReleaseAssetsByName(storeRelease, expectedPart.name)
+        .find((asset) => isUploadedReleaseAsset(asset) && !isMatchingUploadedAsset(asset, expectedPart));
+}
+
 async function ensureChunkStoreRelease(config, repoState) {
     try {
         return await getReleaseByTag(config, CHUNK_STORE_TAG);
@@ -1390,7 +1461,9 @@ function buildChunkRefFromAssets(chunkId, rootPath, groupStats, assets) {
 }
 
 function findStoredChunk(storeRelease, chunkId, rootPath, groupStats) {
-    const assets = Array.isArray(storeRelease?.assets) ? storeRelease.assets : [];
+    const assets = Array.isArray(storeRelease?.assets)
+        ? storeRelease.assets.filter(isUploadedReleaseAsset)
+        : [];
     const exactName = buildChunkAssetBaseName(chunkId);
     const exactAsset = assets.find((asset) => asset.name === exactName);
     if (exactAsset) {
@@ -1426,28 +1499,59 @@ async function refreshChunkStoreRelease(config) {
 }
 
 async function uploadChunkPartWithConflictRecovery(config, storeRelease, part, contentType) {
-    let asset = storeRelease.assets.find((item) => item.name === part.name);
+    let asset = findReleaseAssetsByName(storeRelease, part.name).find((item) => isMatchingUploadedAsset(item, part));
     if (asset) {
         return asset;
     }
 
-    try {
-        asset = await uploadReleaseAsset(config, storeRelease, part.name, part.path, contentType);
-        storeRelease.assets.push(asset);
-        return asset;
-    } catch (error) {
-        if (!isChunkUploadConflictError(error)) {
+    const mismatchedAsset = findMismatchedUploadedAsset(storeRelease, part);
+    if (mismatchedAsset) {
+        throw buildError(
+            `发现同名分块资产但内容不匹配：${part.name}。请先删除对应旧备份或执行空间回收后再试。`,
+            409,
+        );
+    }
+
+    await deleteRecoverableConflictAssets(config, storeRelease, part.name);
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+            asset = await uploadReleaseAsset(config, storeRelease, part.name, part.path, contentType);
+            storeRelease.assets.push(asset);
+            return asset;
+        } catch (error) {
+            if (!isChunkUploadConflictError(error)) {
+                throw error;
+            }
+
+            const freshStoreRelease = await refreshChunkStoreRelease(config);
+            storeRelease.assets = Array.isArray(freshStoreRelease.assets) ? freshStoreRelease.assets.slice() : [];
+
+            const reusableAsset = findReleaseAssetsByName(storeRelease, part.name)
+                .find((item) => isMatchingUploadedAsset(item, part));
+            if (reusableAsset) {
+                return reusableAsset;
+            }
+
+            const freshMismatchedAsset = findMismatchedUploadedAsset(storeRelease, part);
+            if (freshMismatchedAsset) {
+                throw buildError(
+                    `发现同名分块资产但内容不匹配：${part.name}。请先删除对应旧备份或执行空间回收后再试。`,
+                    409,
+                    error.details || error.message,
+                );
+            }
+
+            const deletedCount = await deleteRecoverableConflictAssets(config, storeRelease, part.name);
+            if (attempt < 3 && deletedCount > 0) {
+                continue;
+            }
+
             throw error;
         }
-
-        const freshStoreRelease = await refreshChunkStoreRelease(config);
-        storeRelease.assets = Array.isArray(freshStoreRelease.assets) ? freshStoreRelease.assets.slice() : [];
-        asset = storeRelease.assets.find((item) => item.name === part.name);
-        if (asset) {
-            return asset;
-        }
-        throw error;
     }
+
+    throw buildError(`上传 ${part.name} 失败。`, 500);
 }
 
 async function createOrReuseChunk(config, storeRelease, group, workDir, progress) {
@@ -1976,11 +2080,13 @@ async function runBackupJob(config, options = {}) {
     const tempDir = await makeTempDir('backup');
 
     try {
+        setOperationState('正在检查旧备份');
+        const repoState = await ensureRepositoryReady(config);
+        await pruneIncomingBackupSlot(config, Boolean(options.automatic));
         setOperationState('正在扫描备份目录');
         const collection = await collectDataEntries();
         const chunkGroups = buildChunkGroups(collection);
         setOperationState('正在准备分块仓库');
-        const repoState = await ensureRepositoryReady(config);
         const storeRelease = await ensureChunkStoreRelease(config, repoState);
         const chunkResults = [];
 
@@ -2204,21 +2310,35 @@ async function pruneChunkStoreAssets(config) {
     };
 }
 
-async function pruneBackups(config, { automatic, keepCount }) {
-    if (keepCount <= 0) {
+function isMatchingBackupForRetention(backup, config) {
+    if (backup.device?.id === config.deviceId) {
+        return true;
+    }
+
+    if (!hasMeaningfulDeviceName(config.deviceName) || !hasMeaningfulDeviceName(backup.device?.name)) {
+        return false;
+    }
+
+    return normalizeDeviceIdentityValue(backup.device.name) === normalizeDeviceIdentityValue(config.deviceName);
+}
+
+async function pruneBackups(config, { automatic, keepCount, reserveSlot = 0 }) {
+    if (keepCount <= 0 && reserveSlot <= 0) {
         return {
             keepCount,
+            reserveSlot,
             deletedCount: 0,
             gcDeletedCount: 0,
             gcProtectedCount: 0,
         };
     }
 
+    const effectiveKeepCount = Math.max(0, keepCount - reserveSlot);
     const backups = (await listBackupReleases(config))
         .filter((backup) => backup.automatic === automatic)
-        .filter((backup) => backup.device?.id === config.deviceId);
+        .filter((backup) => isMatchingBackupForRetention(backup, config));
 
-    const staleBackups = backups.slice(keepCount);
+    const staleBackups = backups.slice(effectiveKeepCount);
     for (const backup of staleBackups) {
         await deleteBackupRelease(config, backup);
     }
@@ -2229,6 +2349,7 @@ async function pruneBackups(config, { automatic, keepCount }) {
 
     return {
         keepCount,
+        reserveSlot,
         deletedCount: staleBackups.length,
         gcDeletedCount: gcResult.deletedCount,
         gcProtectedCount: gcResult.protectedCount,
@@ -2248,6 +2369,28 @@ async function pruneManualBackups(config) {
     return await pruneBackups(config, {
         automatic: false,
         keepCount,
+    });
+}
+
+async function pruneIncomingBackupSlot(config, automatic) {
+    const keepCount = automatic
+        ? normalizeAutoBackupKeepCount(config.autoBackupKeepCount)
+        : normalizeManualBackupKeepCount(config.manualBackupKeepCount);
+
+    if (keepCount <= 0) {
+        return {
+            keepCount,
+            reserveSlot: 1,
+            deletedCount: 0,
+            gcDeletedCount: 0,
+            gcProtectedCount: 0,
+        };
+    }
+
+    return await pruneBackups(config, {
+        automatic,
+        keepCount,
+        reserveSlot: 1,
     });
 }
 

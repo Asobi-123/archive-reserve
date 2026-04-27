@@ -1,6 +1,6 @@
 {
   "name": "archive-reserve",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "SillyTavern data backup plugin with GitHub Releases storage and selective path restore.",
   "main": "index.js",
   "license": "AGPL-3.0",
