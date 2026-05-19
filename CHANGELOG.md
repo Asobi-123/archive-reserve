@@ -7,6 +7,14 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-05-19
+
+### Fixed
+
+- Chunk storage is no longer forced into a single hidden release. Archive Reserve now shards chunk assets across multiple hidden chunk-store releases, so long-lived repositories can continue backing up after the previous single-release asset count approached GitHub's `1000 assets per release` limit.
+- Each chunk now records which hidden chunk-store release it belongs to, allowing new sharded backups and old single-store backups to coexist without breaking download, restore, health check, or orphan-chunk garbage collection.
+- Maintenance space statistics now report the number of chunk-store releases, making it easier to verify that automatic chunk-store sharding is active.
+
 ## [0.1.4] - 2026-04-27
 
 ### Fixed
