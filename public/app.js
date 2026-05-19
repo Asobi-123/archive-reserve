@@ -385,7 +385,7 @@ function renderSpaceStats() {
             <article class="space-card">
                 <h3>分块仓库</h3>
                 <p>总分块 ${stats.chunkStore.total.count} 个，占用 ${formatBytes(stats.chunkStore.total.bytes)}。</p>
-                <p>有效引用 ${stats.chunkStore.referenced.count} 个，可回收 ${stats.chunkStore.reclaimable.count} 个。</p>
+                <p>分块仓库 ${stats.chunkStore.releaseCount || 1} 个；有效引用 ${stats.chunkStore.referenced.count} 个，可回收 ${stats.chunkStore.reclaimable.count} 个。</p>
             </article>
             <article class="space-card">
                 <h3>回收保护</h3>

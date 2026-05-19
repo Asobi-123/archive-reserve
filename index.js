@@ -32,6 +32,9 @@ const ARCHIVE_PART_PREFIX = 'archive-reserve.data.zip.part';
 const RELEASE_TAG_PREFIX = 'archive-reserve-';
 const CHUNK_STORE_TAG = 'archivereserve-store-v1';
 const CHUNK_STORE_NAME = 'Archive Reserve Chunk Store';
+const CHUNK_STORE_SHARD_TAG_PREFIX = 'archivereserve-store-v2-';
+const CHUNK_STORE_SHARD_NAME_PREFIX = 'Archive Reserve Chunk Store';
+const CHUNK_STORE_MAX_ASSETS = 950;
 const CHUNK_ASSET_PREFIX = 'archive-reserve.chunk.';
 const SECOND_LEVEL_CHUNK_ROOTS = new Set(['chats', 'assets', 'extensions', 'vectors', 'thumbnails']);
 const USER_THIRD_LEVEL_CHUNK_ROOTS = new Set(['images', 'files']);
@@ -876,11 +879,14 @@ function buildReleaseTag(backupId) {
     return `${RELEASE_TAG_PREFIX}${Date.now()}-${backupId}`;
 }
 
-function buildBackupMeta({ backupId, tagName, name, note, createdAt, config, collection, storeRelease, chunkResults, automatic = false }) {
+function buildBackupMeta({ backupId, tagName, name, note, createdAt, config, collection, storeReleases, chunkResults, automatic = false }) {
     const chunks = chunkResults.map((result) => result.chunk);
     const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.totalBytes, 0);
     const totalPartCount = chunks.reduce((sum, chunk) => sum + chunk.partCount, 0);
     const reusedChunkCount = chunkResults.filter((result) => result.reused).length;
+    const primaryStoreRelease = Array.isArray(storeReleases) && storeReleases.length > 0
+        ? storeReleases.slice().sort(sortChunkStoreReleases)[0]
+        : null;
 
     return {
         metaVersion: 2,
@@ -899,9 +905,10 @@ function buildBackupMeta({ backupId, tagName, name, note, createdAt, config, col
             name: config.deviceName,
         },
         chunkStore: {
-            releaseId: storeRelease.id,
-            tagName: storeRelease.tag_name,
-            name: storeRelease.name,
+            releaseId: Number(primaryStoreRelease?.id) || 0,
+            tagName: trimToEmpty(primaryStoreRelease?.tag_name) || CHUNK_STORE_TAG,
+            name: trimToEmpty(primaryStoreRelease?.name) || CHUNK_STORE_NAME,
+            releaseCount: Array.isArray(storeReleases) ? storeReleases.length : (primaryStoreRelease ? 1 : 0),
         },
         archive: {
             format: 'zip',
@@ -1360,6 +1367,45 @@ function buildChunkAssetPartPrefix(chunkId) {
     return `${buildChunkAssetBaseName(chunkId)}.part`;
 }
 
+function buildChunkStoreShardTag(index) {
+    return `${CHUNK_STORE_SHARD_TAG_PREFIX}${String(index).padStart(4, '0')}`;
+}
+
+function buildChunkStoreShardName(index) {
+    return `${CHUNK_STORE_SHARD_NAME_PREFIX} ${index}`;
+}
+
+function parseChunkStoreShardIndex(tagName) {
+    const value = trimToEmpty(tagName);
+    if (!value.startsWith(CHUNK_STORE_SHARD_TAG_PREFIX)) {
+        return 0;
+    }
+    const numeric = Number(value.slice(CHUNK_STORE_SHARD_TAG_PREFIX.length));
+    return Number.isInteger(numeric) && numeric > 0 ? numeric : 0;
+}
+
+function isChunkStoreReleaseTag(tagName) {
+    const value = trimToEmpty(tagName);
+    return value === CHUNK_STORE_TAG || value.startsWith(CHUNK_STORE_SHARD_TAG_PREFIX);
+}
+
+function isChunkStoreRelease(release) {
+    return Boolean(release?.tag_name) && isChunkStoreReleaseTag(release.tag_name);
+}
+
+function sortChunkStoreReleases(left, right) {
+    const leftIndex = parseChunkStoreShardIndex(left?.tag_name);
+    const rightIndex = parseChunkStoreShardIndex(right?.tag_name);
+    if (leftIndex !== rightIndex) {
+        return leftIndex - rightIndex;
+    }
+    return String(left?.tag_name || '').localeCompare(String(right?.tag_name || ''), 'en');
+}
+
+function countUploadedAssets(release) {
+    return (release?.assets || []).filter(isUploadedReleaseAsset).length;
+}
+
 function findReleaseAssetsByName(release, assetName) {
     const assets = Array.isArray(release?.assets) ? release.assets : [];
     return assets.filter((asset) => asset.name === assetName);
@@ -1420,26 +1466,62 @@ function findMismatchedUploadedAsset(storeRelease, expectedPart) {
         .find((asset) => isUploadedReleaseAsset(asset) && !isMatchingUploadedAsset(asset, expectedPart));
 }
 
-async function ensureChunkStoreRelease(config, repoState) {
-    try {
-        return await getReleaseByTag(config, CHUNK_STORE_TAG);
-    } catch (error) {
-        if (error.statusCode !== 404) {
-            throw error;
-        }
+async function listChunkStoreReleases(config) {
+    const releases = await listAllReleases(config);
+    return releases
+        .filter(isChunkStoreRelease)
+        .sort(sortChunkStoreReleases);
+}
+
+async function createChunkStoreShardRelease(config, repoState, index) {
+    return await createRelease(config, repoState, {
+        tagName: buildChunkStoreShardTag(index),
+        name: buildChunkStoreShardName(index),
+        body: `Archive Reserve hidden chunk store shard ${index}`,
+    });
+}
+
+async function ensureChunkStoreReleases(config, repoState) {
+    const releases = await listChunkStoreReleases(config);
+    if (releases.length > 0) {
+        return releases;
     }
 
-    return await createRelease(config, repoState, {
+    const legacyRelease = await createRelease(config, repoState, {
         tagName: CHUNK_STORE_TAG,
         name: CHUNK_STORE_NAME,
         body: 'Archive Reserve hidden chunk store',
     });
+    return [legacyRelease];
+}
+
+async function ensureWritableChunkStoreRelease(config, repoState, storeReleases, requiredAssetSlots = 1) {
+    const releases = Array.isArray(storeReleases) ? storeReleases.slice().sort(sortChunkStoreReleases) : [];
+    const requiredSlots = Math.max(1, Number(requiredAssetSlots) || 1);
+
+    for (let index = releases.length - 1; index >= 0; index -= 1) {
+        const release = releases[index];
+        if ((countUploadedAssets(release) + requiredSlots) <= CHUNK_STORE_MAX_ASSETS) {
+            return release;
+        }
+    }
+
+    const nextIndex = releases
+        .map((release) => parseChunkStoreShardIndex(release.tag_name))
+        .reduce((max, value) => Math.max(max, value), 0) + 1;
+    const newRelease = await createChunkStoreShardRelease(config, repoState, Math.max(1, nextIndex));
+    releases.push(newRelease);
+    if (Array.isArray(storeReleases)) {
+        storeReleases.push(newRelease);
+    }
+    return newRelease;
 }
 
 function buildChunkRefFromAssets(chunkId, rootPath, groupStats, assets) {
     const sortedAssets = assets.slice().sort((left, right) => left.name.localeCompare(right.name, 'en'));
     const isSplit = sortedAssets.length > 1 || sortedAssets[0]?.name.startsWith(buildChunkAssetPartPrefix(chunkId));
     const totalBytes = sortedAssets.reduce((sum, asset) => sum + (Number(asset.size) || 0), 0);
+    const release = sortedAssets[0]?.release || null;
 
     return {
         id: chunkId,
@@ -1451,6 +1533,11 @@ function buildChunkRefFromAssets(chunkId, rootPath, groupStats, assets) {
         stats: {
             ...groupStats,
         },
+        store: release ? {
+            releaseId: Number(release.id) || 0,
+            tagName: trimToEmpty(release.tag_name),
+            name: trimToEmpty(release.name),
+        } : null,
         parts: sortedAssets.map((asset, index) => ({
             index: index + 1,
             name: asset.name,
@@ -1460,20 +1547,24 @@ function buildChunkRefFromAssets(chunkId, rootPath, groupStats, assets) {
     };
 }
 
-function findStoredChunk(storeRelease, chunkId, rootPath, groupStats) {
-    const assets = Array.isArray(storeRelease?.assets)
-        ? storeRelease.assets.filter(isUploadedReleaseAsset)
-        : [];
+function findStoredChunk(storeReleases, chunkId, rootPath, groupStats) {
+    const releases = Array.isArray(storeReleases) ? storeReleases : [storeReleases];
     const exactName = buildChunkAssetBaseName(chunkId);
-    const exactAsset = assets.find((asset) => asset.name === exactName);
-    if (exactAsset) {
-        return buildChunkRefFromAssets(chunkId, rootPath, groupStats, [exactAsset]);
-    }
-
     const partPrefix = buildChunkAssetPartPrefix(chunkId);
-    const partAssets = assets.filter((asset) => asset.name.startsWith(partPrefix));
-    if (partAssets.length > 0) {
-        return buildChunkRefFromAssets(chunkId, rootPath, groupStats, partAssets);
+
+    for (const release of releases) {
+        const assets = Array.isArray(release?.assets)
+            ? release.assets.filter(isUploadedReleaseAsset).map((asset) => ({ ...asset, release }))
+            : [];
+        const exactAsset = assets.find((asset) => asset.name === exactName);
+        if (exactAsset) {
+            return buildChunkRefFromAssets(chunkId, rootPath, groupStats, [exactAsset]);
+        }
+
+        const partAssets = assets.filter((asset) => asset.name.startsWith(partPrefix));
+        if (partAssets.length > 0) {
+            return buildChunkRefFromAssets(chunkId, rootPath, groupStats, partAssets);
+        }
     }
 
     return null;
@@ -1496,6 +1587,16 @@ function isChunkUploadConflictError(error) {
 
 async function refreshChunkStoreRelease(config) {
     return await getReleaseByTag(config, CHUNK_STORE_TAG);
+}
+
+async function refreshChunkStoreReleaseByRef(config, storeRelease) {
+    if (storeRelease?.id) {
+        return await getRelease(config, storeRelease.id);
+    }
+    if (storeRelease?.tag_name) {
+        return await getReleaseByTag(config, storeRelease.tag_name);
+    }
+    throw buildError('分块仓库 release 引用无效。', 500);
 }
 
 async function uploadChunkPartWithConflictRecovery(config, storeRelease, part, contentType) {
@@ -1524,7 +1625,7 @@ async function uploadChunkPartWithConflictRecovery(config, storeRelease, part, c
                 throw error;
             }
 
-            const freshStoreRelease = await refreshChunkStoreRelease(config);
+            const freshStoreRelease = await refreshChunkStoreReleaseByRef(config, storeRelease);
             storeRelease.assets = Array.isArray(freshStoreRelease.assets) ? freshStoreRelease.assets.slice() : [];
 
             const reusableAsset = findReleaseAssetsByName(storeRelease, part.name)
@@ -1554,8 +1655,8 @@ async function uploadChunkPartWithConflictRecovery(config, storeRelease, part, c
     throw buildError(`上传 ${part.name} 失败。`, 500);
 }
 
-async function createOrReuseChunk(config, storeRelease, group, workDir, progress) {
-    const existing = findStoredChunk(storeRelease, group.id, group.rootPath, group.stats);
+async function createOrReuseChunk(config, repoState, storeReleases, group, workDir, progress) {
+    const existing = findStoredChunk(storeReleases, group.id, group.rootPath, group.stats);
     if (existing) {
         return {
             chunk: existing,
@@ -1569,6 +1670,7 @@ async function createOrReuseChunk(config, storeRelease, group, workDir, progress
     progress && progress(`正在打包分块 ${group.rootPath}`);
     const archiveSummary = await createChunkArchive(group, tempArchivePath);
     const chunkPlan = await splitArchiveIfNeeded(tempArchivePath, workDir, archiveSummary, assetBaseName);
+    const storeRelease = await ensureWritableChunkStoreRelease(config, repoState, storeReleases, chunkPlan.parts.length);
 
     const uploadedAssets = [];
     for (const part of chunkPlan.parts) {
@@ -1593,6 +1695,11 @@ async function createOrReuseChunk(config, storeRelease, group, workDir, progress
             partCount: chunkPlan.parts.length,
             stats: {
                 ...group.stats,
+            },
+            store: {
+                releaseId: Number(storeRelease.id) || 0,
+                tagName: trimToEmpty(storeRelease.tag_name),
+                name: trimToEmpty(storeRelease.name),
             },
             parts: uploadedAssets,
         },
@@ -1722,6 +1829,11 @@ function sanitizeMeta(meta) {
                     entry.type === 'file' && isSelectedPath(rootPath, entry.path) ? sum + entry.size : sum
                 ), 0),
             },
+            store: {
+                releaseId: Number(chunk.store?.releaseId) || 0,
+                tagName: trimToEmpty(chunk.store?.tagName),
+                name: trimToEmpty(chunk.store?.name),
+            },
             parts: sanitizedParts,
         };
     });
@@ -1742,6 +1854,7 @@ function sanitizeMeta(meta) {
             releaseId: Number(meta.chunkStore?.releaseId) || 0,
             tagName: trimToEmpty(meta.chunkStore?.tagName) || CHUNK_STORE_TAG,
             name: trimToEmpty(meta.chunkStore?.name) || CHUNK_STORE_NAME,
+            releaseCount: Number(meta.chunkStore?.releaseCount) || 0,
         },
         archive: {
             format: 'zip',
@@ -1981,10 +2094,14 @@ async function materializeStoredArchive(config, assetMap, archiveRef, workDir, o
     return archivePath;
 }
 
-async function resolveChunkStoreRelease(config, meta) {
-    if (meta.chunkStore?.releaseId) {
+async function resolveChunkStoreRelease(config, meta, chunk = null) {
+    const storeRef = chunk?.store && (chunk.store.releaseId || chunk.store.tagName)
+        ? chunk.store
+        : meta.chunkStore;
+
+    if (storeRef?.releaseId) {
         try {
-            return await getRelease(config, meta.chunkStore.releaseId);
+            return await getRelease(config, storeRef.releaseId);
         } catch (error) {
             if (error.statusCode !== 404) {
                 throw error;
@@ -1992,8 +2109,8 @@ async function resolveChunkStoreRelease(config, meta) {
         }
     }
 
-    if (meta.chunkStore?.tagName) {
-        return await getReleaseByTag(config, meta.chunkStore.tagName);
+    if (storeRef?.tagName) {
+        return await getReleaseByTag(config, storeRef.tagName);
     }
 
     throw buildError('找不到分块仓库 release。', 500);
@@ -2002,6 +2119,16 @@ async function resolveChunkStoreRelease(config, meta) {
 async function materializeChunkArchive(config, storeRelease, chunk, workDir) {
     const assetMap = new Map((storeRelease.assets || []).map((asset) => [asset.name, asset]));
     return await materializeStoredArchive(config, assetMap, chunk, workDir, `${chunk.id}.zip`);
+}
+
+function buildChunkStoreCacheKey(meta, chunk = null) {
+    return String(
+        chunk?.store?.releaseId
+        || chunk?.store?.tagName
+        || meta?.chunkStore?.releaseId
+        || meta?.chunkStore?.tagName
+        || CHUNK_STORE_TAG,
+    );
 }
 
 async function materializeArchive(config, release, meta, workDir) {
@@ -2087,7 +2214,7 @@ async function runBackupJob(config, options = {}) {
         const collection = await collectDataEntries();
         const chunkGroups = buildChunkGroups(collection);
         setOperationState('正在准备分块仓库');
-        const storeRelease = await ensureChunkStoreRelease(config, repoState);
+        const storeReleases = await ensureChunkStoreReleases(config, repoState);
         const chunkResults = [];
 
         for (const [index, group] of chunkGroups.entries()) {
@@ -2098,7 +2225,7 @@ async function runBackupJob(config, options = {}) {
                     detail: group.rootPath,
                 });
             };
-            chunkResults.push(await createOrReuseChunk(config, storeRelease, group, tempDir, progress));
+            chunkResults.push(await createOrReuseChunk(config, repoState, storeReleases, group, tempDir, progress));
         }
 
         const meta = buildBackupMeta({
@@ -2109,7 +2236,7 @@ async function runBackupJob(config, options = {}) {
             createdAt,
             config,
             collection,
-            storeRelease,
+            storeReleases,
             chunkResults,
             automatic: Boolean(options.automatic),
         });
@@ -2161,15 +2288,24 @@ async function deleteBackupRelease(config, backup) {
 }
 
 async function collectReferencedChunkAssetNames(config, backups) {
-    const referenced = new Set();
+    const referenced = new Map();
 
     for (const backup of backups) {
         try {
             const release = await getRelease(config, backup.releaseId);
             const meta = await getBackupMeta(config, release);
             for (const chunk of meta.chunks || []) {
+                const storeKey = chunk.store?.tagName
+                    || (chunk.store?.releaseId ? `id:${chunk.store.releaseId}` : '')
+                    || meta.chunkStore?.tagName
+                    || (meta.chunkStore?.releaseId ? `id:${meta.chunkStore.releaseId}` : '')
+                    || CHUNK_STORE_TAG;
+                if (!referenced.has(storeKey)) {
+                    referenced.set(storeKey, new Set());
+                }
+                const names = referenced.get(storeKey);
                 for (const part of chunk.parts || []) {
-                    referenced.add(part.name);
+                    names.add(part.name);
                 }
             }
         } catch (error) {
@@ -2203,19 +2339,14 @@ async function getSpaceStats(config) {
         .filter(Boolean)
         .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
 
-    let storeRelease = null;
-    try {
-        storeRelease = await getReleaseByTag(config, CHUNK_STORE_TAG);
-    } catch (error) {
-        if (error.statusCode !== 404) {
-            throw error;
-        }
-    }
-
+    const storeReleases = await listChunkStoreReleases(config);
     const referencedAssetNames = await collectReferencedChunkAssetNames(config, backups);
-    const storeAssets = Array.isArray(storeRelease?.assets) ? storeRelease.assets : [];
-    const referencedAssets = storeAssets.filter((asset) => referencedAssetNames.has(asset.name));
-    const orphanAssets = storeAssets.filter((asset) => !referencedAssetNames.has(asset.name));
+    const storeAssets = storeReleases.flatMap((release) => (release.assets || []).map((asset) => ({
+        ...asset,
+        releaseTag: release.tag_name,
+    })));
+    const referencedAssets = storeAssets.filter((asset) => referencedAssetNames.get(asset.releaseTag)?.has(asset.name));
+    const orphanAssets = storeAssets.filter((asset) => !referencedAssetNames.get(asset.releaseTag)?.has(asset.name));
     const protectedAssets = orphanAssets.filter(isChunkAssetGraceProtected);
     const reclaimableAssets = orphanAssets.filter((asset) => !isChunkAssetGraceProtected(asset));
     const backupAssetBytes = releases.reduce((sum, release) => {
@@ -2233,8 +2364,9 @@ async function getSpaceStats(config) {
             metaBytes: backupAssetBytes,
         },
         chunkStore: {
-            exists: Boolean(storeRelease),
-            releaseId: storeRelease?.id || 0,
+            exists: storeReleases.length > 0,
+            releaseId: storeReleases[0]?.id || 0,
+            releaseCount: storeReleases.length,
             total: summarizeChunkAssets(storeAssets),
             referenced: summarizeChunkAssets(referencedAssets),
             protected: summarizeChunkAssets(protectedAssets),
@@ -2248,11 +2380,16 @@ async function getSpaceStats(config) {
 async function runBackupHealthCheck(config, releaseId) {
     const release = await getRelease(config, releaseId);
     const meta = await getBackupMeta(config, release);
-    const storeRelease = await resolveChunkStoreRelease(config, meta);
-    const assetMap = new Map((storeRelease.assets || []).map((asset) => [asset.name, asset]));
     const issues = [];
+    const releaseAssetMaps = new Map();
 
     for (const chunk of meta.chunks || []) {
+        const storeRelease = await resolveChunkStoreRelease(config, meta, chunk);
+        const storeKey = String(storeRelease.id);
+        if (!releaseAssetMaps.has(storeKey)) {
+            releaseAssetMaps.set(storeKey, new Map((storeRelease.assets || []).map((asset) => [asset.name, asset])));
+        }
+        const assetMap = releaseAssetMaps.get(storeKey);
         for (const part of chunk.parts || []) {
             const asset = assetMap.get(part.name);
             if (!asset) {
@@ -2280,21 +2417,22 @@ async function runBackupHealthCheck(config, releaseId) {
 }
 
 async function pruneChunkStoreAssets(config) {
-    let storeRelease;
-    try {
-        storeRelease = await getReleaseByTag(config, CHUNK_STORE_TAG);
-    } catch (error) {
-        if (error.statusCode === 404) {
-            return {
-                deletedCount: 0,
-            };
-        }
-        throw error;
+    const storeReleases = await listChunkStoreReleases(config);
+    if (storeReleases.length === 0) {
+        return {
+            deletedCount: 0,
+            deletedBytes: 0,
+            protectedCount: 0,
+            protectedBytes: 0,
+        };
     }
-
     const backups = await listBackupReleases(config);
     const referencedAssetNames = await collectReferencedChunkAssetNames(config, backups);
-    const orphanAssets = (storeRelease.assets || []).filter((asset) => !referencedAssetNames.has(asset.name));
+    const orphanAssets = storeReleases.flatMap((release) => (
+        (release.assets || [])
+            .filter((asset) => !referencedAssetNames.get(release.tag_name)?.has(asset.name))
+            .map((asset) => ({ ...asset, releaseTag: release.tag_name }))
+    ));
     const protectedAssets = orphanAssets.filter(isChunkAssetGraceProtected);
     const reclaimableAssets = orphanAssets.filter((asset) => !isChunkAssetGraceProtected(asset));
 
@@ -2650,7 +2788,7 @@ const plugin = {
                     }
 
                     await prepareRestoreTarget(mode, selection);
-                    const storeRelease = await resolveChunkStoreRelease(config, meta);
+                    const storeReleaseCache = new Map();
                     let remainingFiles = selection.files.slice();
 
                     for (const [index, chunk] of selection.chunks.entries()) {
@@ -2663,6 +2801,11 @@ const plugin = {
                             total: selection.chunks.length,
                             detail: chunk.rootPath,
                         });
+                        const storeKey = buildChunkStoreCacheKey(meta, chunk);
+                        if (!storeReleaseCache.has(storeKey)) {
+                            storeReleaseCache.set(storeKey, await resolveChunkStoreRelease(config, meta, chunk));
+                        }
+                        const storeRelease = storeReleaseCache.get(storeKey);
                         const chunkPath = await materializeChunkArchive(config, storeRelease, chunk, tempDir);
                         setOperationState('正在恢复分块', {
                             current: index + 1,
@@ -2705,7 +2848,7 @@ const plugin = {
 
                     try {
                         await ensureDirectoryExists(stagingDir);
-                        const storeRelease = await resolveChunkStoreRelease(config, meta);
+                        const storeReleaseCache = new Map();
                         let remainingFiles = meta.entries.filter((entry) => entry.type === 'file');
 
                         for (const [index, chunk] of meta.chunks.entries()) {
@@ -2718,6 +2861,11 @@ const plugin = {
                                 total: meta.chunks.length,
                                 detail: chunk.rootPath,
                             });
+                            const storeKey = buildChunkStoreCacheKey(meta, chunk);
+                            if (!storeReleaseCache.has(storeKey)) {
+                                storeReleaseCache.set(storeKey, await resolveChunkStoreRelease(config, meta, chunk));
+                            }
+                            const storeRelease = storeReleaseCache.get(storeKey);
                             const chunkPath = await materializeChunkArchive(config, storeRelease, chunk, tempDir);
                             setOperationState('正在整理下载包', {
                                 current: index + 1,
