@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-20
+
 ### Added
 
 - Backup settings can now select another top-level SillyTavern user directory under `data`; backup, restore, scheduled backup, and retention use the selected directory.

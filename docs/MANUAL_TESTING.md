@@ -15,7 +15,7 @@ This checklist is for release validation before publishing a new Archive Reserve
 Steps:
 
 1. Open `/api/plugins/archive-reserve/ui`.
-2. Fill repository, token, and device name.
+2. Fill repository, token, device name, and backup user directory.
 3. Save settings.
 4. Restart SillyTavern.
 5. Open the page again.
@@ -25,9 +25,29 @@ Expected:
 - Repository remains filled.
 - Token is not shown in full, but saved-state hint is visible.
 - Device name persists.
+- Backup user directory persists.
 - Auto-backup settings persist.
 
-## 2. Empty Repository Bootstrap
+## 2. Backup User Directory Selection
+
+Steps:
+
+1. Prepare a second top-level user directory under `data`.
+2. Open `仓库设置`.
+3. Select that user directory and save settings.
+4. Create a manual backup.
+5. Restore from that backup while the same user directory is selected.
+6. Switch back to another user directory and try to restore the backup again.
+
+Expected:
+
+- The backup root hint shows the selected user directory.
+- The archive card shows the selected directory as its source.
+- Backup scanning reads only the selected user directory.
+- Full restore writes only to the selected user directory.
+- Restore is blocked when the backup source directory and the current selected directory do not match.
+
+## 3. Empty Repository Bootstrap
 
 Steps:
 
@@ -40,7 +60,7 @@ Expected:
 - The plugin initializes the repository if GitHub allows it.
 - If GitHub refuses, the error is clear enough to tell the user to add an initial commit.
 
-## 3. First Manual Backup
+## 4. First Manual Backup
 
 Steps:
 
@@ -54,7 +74,7 @@ Expected:
 - Device name, created time, size, and note are correct.
 - The status panel returns to idle after completion.
 
-## 4. Later Backup Reuse
+## 5. Later Backup Reuse
 
 Steps:
 
@@ -67,7 +87,7 @@ Expected:
 - It should not behave like a full first-time upload again.
 - The backup metadata still reconstructs into a complete archive.
 
-## 5. Full Restore
+## 6. Full Restore
 
 Steps:
 
@@ -80,7 +100,7 @@ Expected:
 - The selected backup fully replaces the active backup root.
 - The changed local content is reverted to the backup state.
 
-## 6. Selective Restore
+## 7. Selective Restore
 
 Steps:
 
@@ -97,7 +117,7 @@ Expected:
 - `replace` clears selected roots first, then rebuilds them from the backup.
 - Restore progress updates while chunks are being processed.
 
-## 7. Download Export
+## 8. Download Export
 
 Steps:
 
@@ -110,7 +130,7 @@ Expected:
 - Download completes without `ENOENT` or missing-file errors.
 - The zip contains a complete reconstructable data tree for that backup.
 
-## 8. Health Check
+## 9. Health Check
 
 Steps:
 
@@ -122,7 +142,7 @@ Expected:
 - File, chunk, and part counts are shown.
 - If a chunk is missing in the repository, the error should list it explicitly.
 
-## 9. Space Stats And Manual GC
+## 10. Space Stats And Manual GC
 
 Steps:
 
@@ -137,7 +157,7 @@ Expected:
 - GC returns a result even when nothing is reclaimable.
 - Reclaimable space decreases after orphan chunks are deleted.
 
-## 10. Auto Backup
+## 11. Auto Backup
 
 Steps:
 
@@ -150,9 +170,9 @@ Expected:
 
 - Auto-backup state survives restart.
 - One scheduled backup is created.
-- Retention deletes older automatic archives from the same device when over limit.
+- Retention deletes older automatic archives from the same device and backup user directory when over limit.
 
-## 11. Search, Filter, And Mobile Layout
+## 12. Search, Filter, And Mobile Layout
 
 Steps:
 
@@ -174,4 +194,4 @@ Before tagging a release:
 - `package.json` version matches the intended release version.
 - `README.md` and `README_EN.md` describe the current install path and UI entry correctly.
 - `CHANGELOG.md` includes the release entry and date.
-- The archive library, restore flow, download flow, health check, space stats, and auto backup have all been tested at least once.
+- The archive library, backup user directory selection, restore flow, download flow, health check, space stats, and auto backup have all been tested at least once.
