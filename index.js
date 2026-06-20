@@ -36,6 +36,7 @@ const CHUNK_STORE_SHARD_TAG_PREFIX = 'archivereserve-store-v2-';
 const CHUNK_STORE_SHARD_NAME_PREFIX = 'Archive Reserve Chunk Store';
 const CHUNK_STORE_MAX_ASSETS = 950;
 const CHUNK_ASSET_PREFIX = 'archive-reserve.chunk.';
+const ZIP_ENTRY_IDLE_TIMEOUT_MS = 60 * 1000;
 const SECOND_LEVEL_CHUNK_ROOTS = new Set(['chats', 'assets', 'extensions', 'vectors', 'thumbnails']);
 const USER_THIRD_LEVEL_CHUNK_ROOTS = new Set(['images', 'files']);
 const CHUNK_GC_GRACE_MS = 6 * 60 * 60 * 1000;
@@ -1934,6 +1935,62 @@ async function openZip(zipPath) {
     });
 }
 
+function buildZipEntryIdleTimeoutError(zipPath, relativePath, timeoutMs) {
+    return buildError(
+        `解压压缩包文件超时：${relativePath}`,
+        500,
+        `No data or completion event for ${timeoutMs}ms while extracting ${relativePath} from ${zipPath}`,
+    );
+}
+
+async function pipelineZipEntryToFile(readStream, outputPath, zipPath, relativePath, timeoutMs) {
+    const controller = new AbortController();
+    const writeStream = fs.createWriteStream(outputPath);
+    let timeout = null;
+    let timeoutError = null;
+
+    const watchdog = new Transform({
+        transform(chunk, encoding, callback) {
+            resetTimeout();
+            callback(null, chunk);
+        },
+    });
+
+    function resetTimeout() {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => {
+            timeoutError = buildZipEntryIdleTimeoutError(zipPath, relativePath, timeoutMs);
+            readStream.destroy(timeoutError);
+            watchdog.destroy(timeoutError);
+            writeStream.destroy(timeoutError);
+            controller.abort(timeoutError);
+        }, timeoutMs);
+    }
+
+    try {
+        resetTimeout();
+        await pipeline(readStream, watchdog, writeStream, { signal: controller.signal });
+    } catch (error) {
+        throw timeoutError || error;
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+async function extractZipEntryToFile(zipFile, entry, outputPath, zipPath, relativePath, timeoutMs) {
+    const readStream = await new Promise((resolve, reject) => {
+        zipFile.openReadStream(entry, (streamError, stream) => {
+            if (streamError) {
+                reject(streamError);
+                return;
+            }
+            resolve(stream);
+        });
+    });
+
+    await pipelineZipEntryToFile(readStream, outputPath, zipPath, relativePath, timeoutMs);
+}
+
 async function extractSelectedFiles(zipPath, fileEntries, targetRoot = BACKUP_DIR, options = {}) {
     if (!fileEntries.length) {
         return [];
@@ -1943,6 +2000,7 @@ async function extractSelectedFiles(zipPath, fileEntries, targetRoot = BACKUP_DI
     const extractedFiles = new Set();
     const ensuredDirectories = new Set([path.resolve(targetRoot)]);
     const zipFile = await openZip(zipPath);
+    const entryIdleTimeoutMs = Number(options.entryIdleTimeoutMs) || ZIP_ENTRY_IDLE_TIMEOUT_MS;
 
     await new Promise((resolve, reject) => {
         let settled = false;
@@ -1971,12 +2029,16 @@ async function extractSelectedFiles(zipPath, fileEntries, targetRoot = BACKUP_DI
             resolve();
         }
 
-        zipFile.readEntry();
+        function readNextEntry() {
+            if (!settled) {
+                zipFile.readEntry();
+            }
+        }
 
-        zipFile.on('entry', (entry) => {
+        zipFile.on('entry', async (entry) => {
             const rawName = entry.fileName || '';
             if (rawName.endsWith('/')) {
-                zipFile.readEntry();
+                readNextEntry();
                 return;
             }
 
@@ -1989,46 +2051,44 @@ async function extractSelectedFiles(zipPath, fileEntries, targetRoot = BACKUP_DI
             }
 
             if (!targetFiles.has(relativePath)) {
-                zipFile.readEntry();
+                readNextEntry();
                 return;
             }
 
             const outputPath = resolveRootedPath(targetRoot, relativePath);
 
-            zipFile.openReadStream(entry, async (streamError, readStream) => {
-                if (streamError) {
-                    finish(streamError);
+            try {
+                await ensureDirectoryExists(path.dirname(outputPath), ensuredDirectories);
+                try {
+                    const currentStat = await fsp.lstat(outputPath);
+                    if (currentStat.isDirectory()) {
+                        await fsp.rm(outputPath, { recursive: true, force: true });
+                    }
+                } catch (error) {
+                    if (error.code !== 'ENOENT') {
+                        throw error;
+                    }
+                }
+                await extractZipEntryToFile(zipFile, entry, outputPath, zipPath, relativePath, entryIdleTimeoutMs);
+                extractedFiles.add(relativePath);
+                if (extractedFiles.size === targetFiles.size) {
+                    finish();
                     return;
                 }
-
-                try {
-                    await ensureDirectoryExists(path.dirname(outputPath), ensuredDirectories);
-                    try {
-                        const currentStat = await fsp.lstat(outputPath);
-                        if (currentStat.isDirectory()) {
-                            await fsp.rm(outputPath, { recursive: true, force: true });
-                        }
-                    } catch (error) {
-                        if (error.code !== 'ENOENT') {
-                            throw error;
-                        }
-                    }
-                    await pipeline(readStream, fs.createWriteStream(outputPath));
-                    extractedFiles.add(relativePath);
-                    if (extractedFiles.size === targetFiles.size) {
-                        finish();
-                        return;
-                    }
-                    zipFile.readEntry();
-                } catch (error) {
-                    finish(error);
-                }
-            });
+                readNextEntry();
+            } catch (error) {
+                finish(error);
+            }
         });
 
         zipFile.on('end', () => finish());
-        zipFile.on('close', () => finish());
+        zipFile.on('close', () => {
+            if (!settled) {
+                finish(buildError('压缩包读取提前关闭。', 500));
+            }
+        });
         zipFile.on('error', (error) => finish(error));
+        readNextEntry();
     });
 
     return Array.from(extractedFiles);
