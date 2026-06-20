@@ -7,6 +7,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-06-20
+
 ### Fixed
 
 - Restore and download extraction now guard each zip entry against stalled streams and treat premature zip closure as an error, so a stuck chunk extraction can fail cleanly and release the active operation lock.

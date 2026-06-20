@@ -100,6 +100,16 @@ Selective restore is faster than full restore only when the selected paths map t
 
 If you restore very broad paths such as a whole hotspot directory, the plugin may still need to download many chunks.
 
+## Restore Or Download Gets Stuck While Extracting Chunks
+
+Starting from `v0.1.6`, Archive Reserve treats a stalled zip entry extraction as an explicit error instead of leaving the operation lock active indefinitely.
+
+If restore or download fails with an extraction timeout:
+
+- run health check for that backup
+- retry once after confirming the current network and disk are stable
+- collect the backup name, chunk detail, visible error text, and server log before reporting the issue
+
 ## Download Fails Or Produces Missing Files
 
 Check these points:
