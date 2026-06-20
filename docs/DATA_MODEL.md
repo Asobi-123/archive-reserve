@@ -12,6 +12,7 @@ Shape:
 {
   "repo": "owner/repo",
   "token": "github-token",
+  "backupRoot": "default-user",
   "deviceId": "b7d4c1d74b834a5b8fa1c1ce49a5b8f2",
   "deviceName": "MacBook Air",
   "lastBackupAt": "2026-04-10T10:25:12.000Z",
@@ -26,6 +27,7 @@ Notes:
 
 - `repo` is normalized to `owner/repo`
 - `token` is stored server-side only
+- `backupRoot` is a top-level user directory under `data`; empty string means the whole `data` directory
 - `manualBackupKeepCount: 0` means unlimited
 
 ## Status Payload
@@ -41,6 +43,7 @@ Shape:
 {
   "configured": true,
   "dataDirectory": "/path/to/SillyTavern/data/default-user",
+  "backupRoot": "default-user",
   "backupRootLabel": "data/default-user",
   "currentOperation": "正在创建备份",
   "progress": {
@@ -79,6 +82,10 @@ Shape:
   "device": {
     "id": "b7d4c1d74b834a5b8fa1c1ce49a5b8f2",
     "name": "MacBook Air"
+  },
+  "backupRoot": {
+    "root": "default-user",
+    "label": "data/default-user"
   },
   "archive": {
     "mode": "chunked",
@@ -122,6 +129,10 @@ Shape:
   "device": {
     "id": "b7d4c1d74b834a5b8fa1c1ce49a5b8f2",
     "name": "MacBook Air"
+  },
+  "backupRoot": {
+    "root": "default-user",
+    "label": "data/default-user"
   },
   "chunkStore": {
     "releaseId": 123456789,

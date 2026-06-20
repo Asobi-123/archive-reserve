@@ -124,7 +124,7 @@ If health check reports missing chunk assets, that backup is incomplete and must
 
 Check these points:
 
-- whether the affected extension lives under `data/default-user/extensions/<name>`
+- whether the affected extension lives under the selected backup root, such as `data/default-user/extensions/<name>`
 - whether that extension was originally installed as a Git repository
 - whether the backup was created with Archive Reserve `v0.1.2` or later
 
@@ -153,7 +153,7 @@ Collect these details:
 - Archive Reserve version
 - SillyTavern version
 - install style: local / Docker / other
-- current backup root: `data/default-user` or `data`
+- current backup root, such as `data/default-user`
 - exact UI action
 - visible UI error text
 - server log error text

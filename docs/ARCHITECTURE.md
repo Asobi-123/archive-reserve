@@ -31,9 +31,10 @@ The real payload lives in reusable hidden chunk assets referenced by that metada
 ### 2. Backup creation
 
 1. The UI posts a manual backup request to `/backups`.
-2. The server scans the live backup root:
-   - prefer `data/default-user`
-   - fall back to `data`
+2. The server resolves the configured backup root:
+   - default to `data/default-user`
+   - fall back to `data` only when `default-user` does not exist
+   - allow another top-level user directory under `data` when selected in settings
 3. It records every file and directory entry except ignored items such as `.git`, `.gitkeep`, `.DS_Store`, `Thumbs.db`, and `.archive-reserve`.
 4. It groups those entries into stable hidden chunk roots.
 5. For each chunk group, it builds a deterministic chunk id from path, size, and mtime.
@@ -41,14 +42,14 @@ The real payload lives in reusable hidden chunk assets referenced by that metada
 7. If not, the plugin zips that chunk, splits it if needed, uploads the parts, and records the result.
 8. After all chunks are ready, the plugin writes `archive-reserve.meta.json`.
 9. It creates one user-visible backup release and uploads only the metadata asset there.
-10. Optional retention cleanup can then prune old archives from the same device.
+10. Optional retention cleanup can then prune old archives from the same device and backup root.
 
 ### 3. Archive library and backup download
 
 1. The UI reads `/backups`.
 2. The server scans all releases in the configured repository.
 3. Only releases with the Archive Reserve summary body plus `meta.json` are treated as valid backups.
-4. The UI groups and filters those backups by name, note, and device.
+4. The UI groups and filters those backups by name, note, device, and displayed backup root.
 5. When the user clicks download, the plugin reconstructs a complete zip from hidden chunks, streams it to the browser, then removes temporary files.
 
 ### 4. Full restore and selective restore
@@ -59,10 +60,11 @@ The real payload lives in reusable hidden chunk assets referenced by that metada
    - `full` clears the entire active backup root first
    - `merge` keeps everything except files explicitly overwritten by the backup
    - `replace` removes only the selected roots first
-4. The plugin resolves which hidden chunks are needed for the selected paths.
-5. It downloads only those chunk zips.
-6. It extracts only the selected files from those zips.
-7. If any required file is still missing after all relevant chunks are processed, the restore fails with an explicit missing-file list.
+4. The plugin rejects restore when the backup root recorded in metadata does not match the currently selected backup root.
+5. The plugin resolves which hidden chunks are needed for the selected paths.
+6. It downloads only those chunk zips.
+7. It extracts only the selected files from those zips.
+8. If any required file is still missing after all relevant chunks are processed, the restore fails with an explicit missing-file list.
 
 ### 5. Health check, space stats, and garbage collection
 

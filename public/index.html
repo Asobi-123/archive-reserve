@@ -57,6 +57,11 @@
                         <span>当前设备名</span>
                         <input id="device-name-input" name="deviceName" type="text" placeholder="例如 MacBook-Air">
                     </label>
+                    <label class="field">
+                        <span>备份用户目录</span>
+                        <select id="backup-root-input" name="backupRoot"></select>
+                        <small class="field-hint">选择 SillyTavern <code>data</code> 下要备份和恢复的用户目录。</small>
+                    </label>
                     <label class="field field-wide toggle-field">
                         <span>自动定时备份</span>
                         <label class="toggle-inline">
@@ -131,7 +136,7 @@
             <section class="panel tab-page" data-ar-page="create">
                 <div class="panel-head">
                     <h2>创建备份</h2>
-                    <p>默认打包当前用户目录。无需勾选备份范围。</p>
+                    <p>打包当前选择的用户目录。无需勾选备份范围。</p>
                 </div>
                 <p id="backup-root-hint" class="panel-hint"></p>
                 <form id="backup-form" class="form-grid">

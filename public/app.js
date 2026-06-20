@@ -18,6 +18,7 @@ const state = {
     csrfToken: '',
     operationPollTimer: null,
     backupRootLabel: '',
+    backupRoots: [],
     autoBackup: null,
     spaceStats: null,
     spaceStatsState: 'idle',
@@ -52,6 +53,7 @@ function cacheElements() {
     elements.repoInput = document.getElementById('repo-input');
     elements.tokenInput = document.getElementById('token-input');
     elements.deviceNameInput = document.getElementById('device-name-input');
+    elements.backupRootInput = document.getElementById('backup-root-input');
     elements.autoBackupEnabledInput = document.getElementById('auto-backup-enabled-input');
     elements.autoBackupIntervalInput = document.getElementById('auto-backup-interval-input');
     elements.autoBackupKeepInput = document.getElementById('auto-backup-keep-input');
@@ -496,9 +498,24 @@ async function ensureCsrfToken(force = false) {
     return state.csrfToken;
 }
 
+function renderBackupRootOptions(selectedRoot = '') {
+    const roots = state.backupRoots.length
+        ? state.backupRoots
+        : [{ value: selectedRoot, label: selectedRoot ? `data/${selectedRoot}` : 'data', exists: true }];
+
+    elements.backupRootInput.innerHTML = roots.map((root) => {
+        const value = root.value || '';
+        const selected = value === selectedRoot ? 'selected' : '';
+        const suffix = root.exists === false ? '（不存在）' : '';
+        return `<option value="${escapeHtml(value)}" ${selected}>${escapeHtml(root.label || 'data')}${suffix}</option>`;
+    }).join('');
+    elements.backupRootInput.value = selectedRoot;
+}
+
 async function loadConfig() {
     const result = await apiRequest('/config');
     state.config = result.config;
+    state.backupRoots = Array.isArray(result.backupRoots) ? result.backupRoots : [];
     state.configured = Boolean(result.status?.configured);
     state.currentOperation = result.status?.currentOperation || '';
     state.currentProgress = result.status?.progress || null;
@@ -514,6 +531,7 @@ async function loadConfig() {
 
     elements.repoInput.value = result.config.repo || '';
     elements.deviceNameInput.value = result.config.deviceName || '';
+    renderBackupRootOptions(result.config.backupRoot || '');
     elements.autoBackupEnabledInput.checked = Boolean(result.config.autoBackupEnabled);
     elements.autoBackupIntervalInput.value = String(result.config.autoBackupIntervalMinutes || 240);
     elements.autoBackupKeepInput.value = String(result.config.autoBackupKeepCount || 12);
@@ -696,6 +714,7 @@ function renderBackupList() {
                 <p class="backup-note">${escapeHtml(backup.note || '无备注')}</p>
                 <div class="backup-meta">
                     <span class="meta-chip">设备：${escapeHtml(backup.device.name)}</span>
+                    <span class="meta-chip">目录：${escapeHtml(formatBackupRootLabel(backup))}</span>
                     <span class="meta-chip">时间：${escapeHtml(formatDate(backup.createdAt))}</span>
                     <span class="meta-chip">体积：${escapeHtml(formatBytes(backup.archive.totalBytes))}</span>
                     <span class="meta-chip">分卷：${backup.archive.partCount} 份</span>
@@ -721,6 +740,10 @@ function renderBackupList() {
     syncInteractivity();
 }
 
+function formatBackupRootLabel(backup) {
+    return backup.backupRoot?.label || '旧版默认目录';
+}
+
 function syncBackupActionMenus() {
     const desktop = window.innerWidth > 960;
     elements.backupList.querySelectorAll('.backup-action-menu').forEach((menu) => {
@@ -738,6 +761,7 @@ function syncInteractivity() {
     elements.repoInput.disabled = locked;
     elements.tokenInput.disabled = locked;
     elements.deviceNameInput.disabled = locked;
+    elements.backupRootInput.disabled = locked;
     elements.autoBackupEnabledInput.disabled = locked;
     elements.autoBackupIntervalInput.disabled = locked;
     elements.autoBackupKeepInput.disabled = locked;
@@ -857,6 +881,7 @@ async function onSaveConfig(event) {
                 repo: elements.repoInput.value,
                 token: elements.tokenInput.value,
                 deviceName: elements.deviceNameInput.value,
+                backupRoot: elements.backupRootInput.value,
                 autoBackupEnabled: elements.autoBackupEnabledInput.checked,
                 autoBackupIntervalMinutes: elements.autoBackupIntervalInput.value,
                 autoBackupKeepCount: elements.autoBackupKeepInput.value,

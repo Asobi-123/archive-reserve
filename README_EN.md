@@ -53,6 +53,8 @@ If that directory does not exist, it falls back to:
 data
 ```
 
+You can switch to another user directory under `data` in the repository settings. Backup creation, full restore, selective restore, scheduled backup, and retention use the currently selected user directory.
+
 Ignored content:
 
 - `.git`

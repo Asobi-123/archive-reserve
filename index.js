@@ -20,8 +20,7 @@ const info = {
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const DATA_ROOT_DIR = path.join(process.cwd(), 'data');
 const DEFAULT_USER_DATA_DIR = path.join(DATA_ROOT_DIR, 'default-user');
-const BACKUP_DIR = fs.existsSync(DEFAULT_USER_DATA_DIR) ? DEFAULT_USER_DATA_DIR : DATA_ROOT_DIR;
-const BACKUP_ROOT_LABEL = path.relative(process.cwd(), BACKUP_DIR).replace(/\\/g, '/') || 'data';
+const DEFAULT_BACKUP_ROOT = fs.existsSync(DEFAULT_USER_DATA_DIR) ? 'default-user' : '';
 const STORAGE_DIR = path.join(DATA_ROOT_DIR, '.archive-reserve');
 const CONFIG_PATH = path.join(STORAGE_DIR, 'config.json');
 const LEGACY_STORAGE_CONFIG_PATH = path.join(DATA_ROOT_DIR, '_storage', info.id, 'config.json');
@@ -58,6 +57,7 @@ const IGNORED_DIRECTORY_NAMES = new Set(['.git']);
 const DEFAULT_CONFIG = {
     repo: '',
     token: '',
+    backupRoot: DEFAULT_BACKUP_ROOT,
     deviceId: '',
     deviceName: '',
     lastBackupAt: null,
@@ -92,6 +92,39 @@ function trimToEmpty(value) {
 
 function normalizeDeviceName(value) {
     return trimToEmpty(value) || getDefaultDeviceName();
+}
+
+function normalizeBackupRoot(value = DEFAULT_BACKUP_ROOT) {
+    const input = value === undefined || value === null
+        ? DEFAULT_BACKUP_ROOT
+        : String(value);
+    const raw = input.replace(/\\/g, '/').trim().replace(/^\/+/, '').replace(/\/+$/, '');
+    if (!raw || raw === '.' || raw === 'data') {
+        return '';
+    }
+
+    const normalized = normalizeRelativePath(raw);
+    const parts = normalizePathParts(normalized);
+    if (parts.length !== 1 || parts[0].startsWith('.') || parts[0].startsWith('_')) {
+        throw buildError('备份用户目录无效。请选择 data 目录下的用户目录。');
+    }
+    return parts[0];
+}
+
+function getBackupRootInfo(config = {}) {
+    const backupRoot = normalizeBackupRoot(Object.prototype.hasOwnProperty.call(config, 'backupRoot')
+        ? config.backupRoot
+        : DEFAULT_BACKUP_ROOT);
+    const directory = backupRoot
+        ? resolveRootedPath(DATA_ROOT_DIR, backupRoot)
+        : DATA_ROOT_DIR;
+    const label = path.relative(process.cwd(), directory).replace(/\\/g, '/') || 'data';
+
+    return {
+        root: backupRoot,
+        directory,
+        label,
+    };
 }
 
 function normalizeDeviceIdentityValue(value) {
@@ -258,6 +291,7 @@ function formatTokenPreview(value) {
 function toClientConfig(config) {
     return {
         repo: config.repo,
+        backupRoot: config.backupRoot,
         deviceId: config.deviceId,
         deviceName: config.deviceName,
         hasToken: Boolean(config.token),
@@ -274,6 +308,7 @@ function normalizeConfig(parsed) {
     return {
         ...DEFAULT_CONFIG,
         ...parsed,
+        backupRoot: normalizeBackupRoot(Object.prototype.hasOwnProperty.call(parsed, 'backupRoot') ? parsed.backupRoot : DEFAULT_CONFIG.backupRoot),
         deviceId: parsed.deviceId || createId(),
         deviceName: parsed.deviceName || getDefaultDeviceName(),
         autoBackupEnabled: Boolean(parsed.autoBackupEnabled),
@@ -313,10 +348,12 @@ function setOperationState(label = '', progress = null) {
 }
 
 function buildStatusPayload(config) {
+    const backupRootInfo = getBackupRootInfo(config);
     return {
         configured: Boolean(config.repo && config.token),
-        dataDirectory: BACKUP_DIR,
-        backupRootLabel: BACKUP_ROOT_LABEL,
+        dataDirectory: backupRootInfo.directory,
+        backupRoot: backupRootInfo.root,
+        backupRootLabel: backupRootInfo.label,
         currentOperation,
         progress: currentProgress,
         autoBackup: {
@@ -328,6 +365,60 @@ function buildStatusPayload(config) {
         },
         manualBackupKeepCount: normalizeManualBackupKeepCount(config.manualBackupKeepCount),
     };
+}
+
+async function listBackupRoots(config = {}) {
+    const currentRoot = getBackupRootInfo(config).root;
+    const options = new Map();
+
+    function addOption(value, exists = true) {
+        const normalized = normalizeBackupRoot(value);
+        const directory = normalized
+            ? resolveRootedPath(DATA_ROOT_DIR, normalized)
+            : DATA_ROOT_DIR;
+        const label = path.relative(process.cwd(), directory).replace(/\\/g, '/') || 'data';
+        options.set(normalized, {
+            value: normalized,
+            label,
+            exists,
+            current: normalized === currentRoot,
+        });
+    }
+
+    if (!DEFAULT_BACKUP_ROOT || currentRoot === '') {
+        addOption('');
+    }
+
+    try {
+        const entries = sortDirEntries(await fsp.readdir(DATA_ROOT_DIR, { withFileTypes: true }));
+        for (const entry of entries) {
+            if (!entry.isDirectory() || entry.isSymbolicLink()) {
+                continue;
+            }
+            if (entry.name.startsWith('.') || entry.name.startsWith('_')) {
+                continue;
+            }
+            addOption(entry.name);
+        }
+    } catch (error) {
+        if (error.code !== 'ENOENT') {
+            throw error;
+        }
+    }
+
+    if (currentRoot && !options.has(currentRoot)) {
+        addOption(currentRoot, false);
+    }
+
+    return Array.from(options.values()).sort((left, right) => {
+        if (left.value === DEFAULT_BACKUP_ROOT) {
+            return -1;
+        }
+        if (right.value === DEFAULT_BACKUP_ROOT) {
+            return 1;
+        }
+        return left.label.localeCompare(right.label, 'zh-Hans-CN');
+    });
 }
 
 async function tryMigrateConfig(sourcePath, label) {
@@ -360,6 +451,10 @@ async function readConfig() {
 
         if (!next.deviceName) {
             next.deviceName = getDefaultDeviceName();
+            changed = true;
+        }
+
+        if (parsed.backupRoot !== next.backupRoot) {
             changed = true;
         }
 
@@ -445,22 +540,22 @@ function shouldIgnoreRelativePath(relativePath, isDirectory = false) {
     return IGNORED_FILE_NAMES.has(name);
 }
 
-async function ensureDataDirectory() {
+async function ensureDataDirectory(backupRootInfo) {
     try {
-        const stat = await fsp.stat(BACKUP_DIR);
+        const stat = await fsp.stat(backupRootInfo.directory);
         if (!stat.isDirectory()) {
-            throw buildError(`备份目录不存在：${BACKUP_DIR}`);
+            throw buildError(`备份目录不存在：${backupRootInfo.directory}`);
         }
     } catch (error) {
         if (error.statusCode) {
             throw error;
         }
-        throw buildError(`找不到 SillyTavern 备份目录：${BACKUP_DIR}`);
+        throw buildError(`找不到 SillyTavern 备份目录：${backupRootInfo.directory}`);
     }
 }
 
-function resolveDataPath(relativePath = '') {
-    return resolveRootedPath(BACKUP_DIR, relativePath);
+function resolveDataPath(backupRootInfo, relativePath = '') {
+    return resolveRootedPath(backupRootInfo.directory, relativePath);
 }
 
 function resolveRootedPath(rootDir, relativePath = '') {
@@ -472,17 +567,17 @@ function resolveRootedPath(rootDir, relativePath = '') {
     return target;
 }
 
-async function removeIfExists(relativePath) {
-    await fsp.rm(resolveDataPath(relativePath), { recursive: true, force: true });
+async function removeIfExists(backupRootInfo, relativePath) {
+    await fsp.rm(resolveDataPath(backupRootInfo, relativePath), { recursive: true, force: true });
 }
 
-async function clearDataDirectory() {
-    const entries = await fsp.readdir(BACKUP_DIR, { withFileTypes: true });
+async function clearDataDirectory(backupRootInfo) {
+    const entries = await fsp.readdir(backupRootInfo.directory, { withFileTypes: true });
     for (const entry of entries) {
         if (shouldIgnoreRelativePath(entry.name, entry.isDirectory())) {
             continue;
         }
-        await fsp.rm(path.join(BACKUP_DIR, entry.name), { recursive: true, force: true });
+        await fsp.rm(path.join(backupRootInfo.directory, entry.name), { recursive: true, force: true });
     }
 }
 
@@ -511,14 +606,14 @@ function sortDirEntries(entries) {
     return entries.sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
 }
 
-async function collectDataEntries() {
+async function collectDataEntries(backupRootInfo) {
     const entries = [];
     let fileCount = 0;
     let directoryCount = 0;
     let rawBytes = 0;
 
     async function walk(currentRelativePath = '') {
-        const currentAbsolutePath = resolveDataPath(currentRelativePath);
+        const currentAbsolutePath = resolveDataPath(backupRootInfo, currentRelativePath);
         const dirEntries = sortDirEntries(await fsp.readdir(currentAbsolutePath, { withFileTypes: true }));
 
         for (const dirEntry of dirEntries) {
@@ -550,7 +645,7 @@ async function collectDataEntries() {
                 continue;
             }
 
-            const stat = await fsp.stat(resolveDataPath(nextRelativePath));
+            const stat = await fsp.stat(resolveDataPath(backupRootInfo, nextRelativePath));
             fileCount += 1;
             rawBytes += stat.size;
             entries.push({
@@ -739,11 +834,11 @@ async function createArchiveFromDirectory(sourceDir, outputPath) {
     });
 }
 
-async function createArchive(outputPath) {
-    return await createArchiveFromDirectory(BACKUP_DIR, outputPath);
+async function createArchive(backupRootInfo, outputPath) {
+    return await createArchiveFromDirectory(backupRootInfo.directory, outputPath);
 }
 
-async function createChunkArchive(group, outputPath) {
+async function createChunkArchive(backupRootInfo, group, outputPath) {
     await ensureDirectoryExists(path.dirname(outputPath));
     const fileEntries = group.entries.filter((entry) => entry.type === 'file');
 
@@ -765,7 +860,7 @@ async function createChunkArchive(group, outputPath) {
 
         archive.pipe(hashing.stream).pipe(output);
         for (const fileEntry of fileEntries) {
-            archive.file(resolveDataPath(fileEntry.path), { name: fileEntry.path });
+            archive.file(resolveDataPath(backupRootInfo, fileEntry.path), { name: fileEntry.path });
         }
 
         archive.finalize();
@@ -880,6 +975,14 @@ function buildReleaseTag(backupId) {
     return `${RELEASE_TAG_PREFIX}${Date.now()}-${backupId}`;
 }
 
+function buildBackupRootSummary(config) {
+    const backupRootInfo = getBackupRootInfo(config);
+    return {
+        root: backupRootInfo.root,
+        label: backupRootInfo.label,
+    };
+}
+
 function buildBackupMeta({ backupId, tagName, name, note, createdAt, config, collection, storeReleases, chunkResults, automatic = false }) {
     const chunks = chunkResults.map((result) => result.chunk);
     const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.totalBytes, 0);
@@ -905,6 +1008,7 @@ function buildBackupMeta({ backupId, tagName, name, note, createdAt, config, col
             id: config.deviceId,
             name: config.deviceName,
         },
+        backupRoot: buildBackupRootSummary(config),
         chunkStore: {
             releaseId: Number(primaryStoreRelease?.id) || 0,
             tagName: trimToEmpty(primaryStoreRelease?.tag_name) || CHUNK_STORE_TAG,
@@ -936,6 +1040,7 @@ function buildReleaseSummary(meta) {
         automatic: Boolean(meta.automatic),
         createdAt: meta.createdAt,
         device: meta.device,
+        backupRoot: meta.backupRoot,
         archive: {
             mode: meta.archive.mode,
             split: false,
@@ -969,6 +1074,58 @@ function parseReleaseBody(body) {
     return null;
 }
 
+function normalizeBackupRootSummary(value) {
+    if (!value) {
+        return null;
+    }
+
+    try {
+        const root = normalizeBackupRoot(value.root ?? value.path ?? value.value ?? '');
+        const directory = root
+            ? resolveRootedPath(DATA_ROOT_DIR, root)
+            : DATA_ROOT_DIR;
+        return {
+            root,
+            label: trimToEmpty(value.label) || (path.relative(process.cwd(), directory).replace(/\\/g, '/') || 'data'),
+        };
+    } catch (error) {
+        return null;
+    }
+}
+
+function getLegacyBackupRoot() {
+    return DEFAULT_BACKUP_ROOT;
+}
+
+function getBackupRootFromSummary(summary) {
+    const normalized = normalizeBackupRootSummary(summary);
+    return normalized ? normalized.root : getLegacyBackupRoot();
+}
+
+function getBackupRootLabelFromRoot(root) {
+    const directory = root
+        ? resolveRootedPath(DATA_ROOT_DIR, root)
+        : DATA_ROOT_DIR;
+    return path.relative(process.cwd(), directory).replace(/\\/g, '/') || 'data';
+}
+
+function isMatchingBackupRoot(backupRootSummary, config) {
+    return getBackupRootFromSummary(backupRootSummary) === getBackupRootInfo(config).root;
+}
+
+function assertBackupRootMatchesForRestore(meta, config) {
+    const sourceRoot = getBackupRootFromSummary(meta.backupRoot);
+    const targetRootInfo = getBackupRootInfo(config);
+    if (sourceRoot === targetRootInfo.root) {
+        return;
+    }
+
+    throw buildError(
+        `这份备份来自 ${getBackupRootLabelFromRoot(sourceRoot)}，当前恢复目标是 ${targetRootInfo.label}。请先在仓库设置中切换到对应用户目录。`,
+        409,
+    );
+}
+
 function backupFromRelease(release) {
     if (!release || !release.tag_name || !release.tag_name.startsWith(RELEASE_TAG_PREFIX)) {
         return null;
@@ -992,6 +1149,7 @@ function backupFromRelease(release) {
         automatic: Boolean(summary.automatic || summary.note === '[自动备份]'),
         createdAt: summary.createdAt || release.created_at,
         device: summary.device || { id: 'unknown', name: 'Unknown Device' },
+        backupRoot: normalizeBackupRootSummary(summary.backupRoot),
         archive: {
             mode: summary.archive?.mode || 'chunked',
             split: false,
@@ -1656,7 +1814,7 @@ async function uploadChunkPartWithConflictRecovery(config, storeRelease, part, c
     throw buildError(`上传 ${part.name} 失败。`, 500);
 }
 
-async function createOrReuseChunk(config, repoState, storeReleases, group, workDir, progress) {
+async function createOrReuseChunk(config, repoState, storeReleases, backupRootInfo, group, workDir, progress) {
     const existing = findStoredChunk(storeReleases, group.id, group.rootPath, group.stats);
     if (existing) {
         return {
@@ -1669,7 +1827,7 @@ async function createOrReuseChunk(config, repoState, storeReleases, group, workD
     const tempArchivePath = path.join(workDir, `${group.id}.zip`);
 
     progress && progress(`正在打包分块 ${group.rootPath}`);
-    const archiveSummary = await createChunkArchive(group, tempArchivePath);
+    const archiveSummary = await createChunkArchive(backupRootInfo, group, tempArchivePath);
     const chunkPlan = await splitArchiveIfNeeded(tempArchivePath, workDir, archiveSummary, assetBaseName);
     const storeRelease = await ensureWritableChunkStoreRelease(config, repoState, storeReleases, chunkPlan.parts.length);
 
@@ -1851,6 +2009,7 @@ function sanitizeMeta(meta) {
             id: trimToEmpty(meta.device?.id) || 'unknown-device',
             name: trimToEmpty(meta.device?.name) || 'Unknown Device',
         },
+        backupRoot: normalizeBackupRootSummary(meta.backupRoot),
         chunkStore: {
             releaseId: Number(meta.chunkStore?.releaseId) || 0,
             tagName: trimToEmpty(meta.chunkStore?.tagName) || CHUNK_STORE_TAG,
@@ -1903,13 +2062,13 @@ function collectParentDirectories(fileEntries) {
     return directories;
 }
 
-async function prepareRestoreTarget(mode, selection) {
+async function prepareRestoreTarget(backupRootInfo, mode, selection) {
     if (mode === 'full') {
-        await clearDataDirectory();
+        await clearDataDirectory(backupRootInfo);
     } else if (mode === 'replace') {
         const selectedRoots = selection.selectedPaths.slice().sort((left, right) => right.length - left.length);
         for (const rootPath of selectedRoots) {
-            await removeIfExists(rootPath);
+            await removeIfExists(backupRootInfo, rootPath);
         }
     }
 
@@ -1919,7 +2078,7 @@ async function prepareRestoreTarget(mode, selection) {
     }
 
     for (const directoryPath of Array.from(requiredDirectories).sort((left, right) => left.length - right.length)) {
-        await ensureDirectoryExists(resolveDataPath(directoryPath));
+        await ensureDirectoryExists(resolveDataPath(backupRootInfo, directoryPath));
     }
 }
 
@@ -1991,7 +2150,7 @@ async function extractZipEntryToFile(zipFile, entry, outputPath, zipPath, relati
     await pipelineZipEntryToFile(readStream, outputPath, zipPath, relativePath, timeoutMs);
 }
 
-async function extractSelectedFiles(zipPath, fileEntries, targetRoot = BACKUP_DIR, options = {}) {
+async function extractSelectedFiles(zipPath, fileEntries, targetRoot = getBackupRootInfo({}).directory, options = {}) {
     if (!fileEntries.length) {
         return [];
     }
@@ -2247,6 +2406,7 @@ function summarizeBackupForResponse(releaseId, tagName, summary, publishedAt) {
         automatic: Boolean(summary.automatic),
         createdAt: summary.createdAt,
         device: summary.device,
+        backupRoot: summary.backupRoot,
         archive: summary.archive,
         stats: summary.stats,
         publishedAt,
@@ -2257,7 +2417,8 @@ function summarizeBackupForResponse(releaseId, tagName, summary, publishedAt) {
 
 async function runBackupJob(config, options = {}) {
     ensureConfigured(config);
-    await ensureDataDirectory();
+    const backupRootInfo = getBackupRootInfo(config);
+    await ensureDataDirectory(backupRootInfo);
 
     const name = trimToEmpty(options.name) || buildDefaultBackupName();
     const note = trimToEmpty(options.note);
@@ -2270,8 +2431,12 @@ async function runBackupJob(config, options = {}) {
         setOperationState('正在检查旧备份');
         const repoState = await ensureRepositoryReady(config);
         await pruneIncomingBackupSlot(config, Boolean(options.automatic));
-        setOperationState('正在扫描备份目录');
-        const collection = await collectDataEntries();
+        setOperationState('正在扫描备份目录', {
+            current: 1,
+            total: 1,
+            detail: backupRootInfo.label,
+        });
+        const collection = await collectDataEntries(backupRootInfo);
         const chunkGroups = buildChunkGroups(collection);
         setOperationState('正在准备分块仓库');
         const storeReleases = await ensureChunkStoreReleases(config, repoState);
@@ -2285,7 +2450,7 @@ async function runBackupJob(config, options = {}) {
                     detail: group.rootPath,
                 });
             };
-            chunkResults.push(await createOrReuseChunk(config, repoState, storeReleases, group, tempDir, progress));
+            chunkResults.push(await createOrReuseChunk(config, repoState, storeReleases, backupRootInfo, group, tempDir, progress));
         }
 
         const meta = buildBackupMeta({
@@ -2509,6 +2674,10 @@ async function pruneChunkStoreAssets(config) {
 }
 
 function isMatchingBackupForRetention(backup, config) {
+    if (!isMatchingBackupRoot(backup.backupRoot, config)) {
+        return false;
+    }
+
     if (backup.device?.id === config.deviceId) {
         return true;
     }
@@ -2681,6 +2850,7 @@ const plugin = {
             res.json({
                 ok: true,
                 config: toClientConfig(config),
+                backupRoots: await listBackupRoots(config),
                 status: buildStatusPayload(config),
             });
         }));
@@ -2724,6 +2894,7 @@ const plugin = {
             const nextConfig = {
                 ...current,
                 repo: repoInput ? parseRepoInput(repoInput).slug : current.repo,
+                backupRoot: normalizeBackupRoot(Object.prototype.hasOwnProperty.call(req.body || {}, 'backupRoot') ? req.body.backupRoot : current.backupRoot),
                 deviceName: normalizeDeviceName(req.body?.deviceName || current.deviceName),
                 autoBackupEnabled: Boolean(req.body?.autoBackupEnabled),
                 autoBackupIntervalMinutes: normalizeAutoBackupInterval(req.body?.autoBackupIntervalMinutes),
@@ -2741,6 +2912,7 @@ const plugin = {
             res.json({
                 ok: true,
                 config: toClientConfig(nextConfig),
+                backupRoots: await listBackupRoots(nextConfig),
             });
         }));
 
@@ -2821,7 +2993,8 @@ const plugin = {
             await withExclusiveOperation('正在恢复备份', async () => {
                 const config = await readConfig();
                 ensureConfigured(config);
-                await ensureDataDirectory();
+                const backupRootInfo = getBackupRootInfo(config);
+                await ensureDataDirectory(backupRootInfo);
 
                 const releaseId = parseReleaseId(req.params.releaseId);
                 const mode = trimToEmpty(req.body?.mode) || 'full';
@@ -2831,6 +3004,7 @@ const plugin = {
 
                 const release = await getRelease(config, releaseId);
                 const meta = await getBackupMeta(config, release);
+                assertBackupRootMatchesForRestore(meta, config);
                 const tempDir = await makeTempDir('restore');
 
                 try {
@@ -2847,7 +3021,7 @@ const plugin = {
                         throw buildError('至少选择一个要恢复的路径。');
                     }
 
-                    await prepareRestoreTarget(mode, selection);
+                    await prepareRestoreTarget(backupRootInfo, mode, selection);
                     const storeReleaseCache = new Map();
                     let remainingFiles = selection.files.slice();
 
@@ -2872,7 +3046,7 @@ const plugin = {
                             total: selection.chunks.length,
                             detail: chunk.rootPath,
                         });
-                        const extractedPaths = await extractSelectedFiles(chunkPath, remainingFiles, BACKUP_DIR, {
+                        const extractedPaths = await extractSelectedFiles(chunkPath, remainingFiles, backupRootInfo.directory, {
                             allowMissing: true,
                         });
                         const extractedSet = new Set(extractedPaths);
