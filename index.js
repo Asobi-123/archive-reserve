@@ -1000,7 +1000,7 @@ function buildBackupRootSummary(config) {
     };
 }
 
-function buildBackupMeta({ backupId, tagName, name, note, createdAt, config, collection, storeReleases, chunkResults, automatic = false }) {
+function buildBackupMeta({ backupId, tagName, name, note, createdAt, config, collection, storeReleases, chunkResults, automatic = false, reservation = null }) {
     const chunks = chunkResults.map((result) => result.chunk);
     const totalBytes = chunks.reduce((sum, chunk) => sum + chunk.totalBytes, 0);
     const totalPartCount = chunks.reduce((sum, chunk) => sum + chunk.partCount, 0);
@@ -1017,6 +1017,9 @@ function buildBackupMeta({ backupId, tagName, name, note, createdAt, config, col
         note,
         automatic: Boolean(automatic),
         createdAt,
+        laneId: reservation?.laneId || '',
+        segmentId: reservation?.segmentId || '',
+        repositoryId: reservation?.repositoryId || '',
         plugin: {
             id: info.id,
             version: info.version,
@@ -1056,6 +1059,9 @@ function buildReleaseSummary(meta) {
         note: meta.note,
         automatic: Boolean(meta.automatic),
         createdAt: meta.createdAt,
+        laneId: meta.laneId,
+        segmentId: meta.segmentId,
+        repositoryId: meta.repositoryId,
         device: meta.device,
         backupRoot: meta.backupRoot,
         archive: {
@@ -1165,6 +1171,9 @@ function backupFromRelease(release) {
         note: summary.note || '',
         automatic: Boolean(summary.automatic || summary.note === '[自动备份]'),
         createdAt: summary.createdAt || release.created_at,
+        laneId: trimToEmpty(summary.laneId),
+        segmentId: trimToEmpty(summary.segmentId),
+        repositoryId: trimToEmpty(summary.repositoryId),
         device: summary.device || { id: 'unknown', name: 'Unknown Device' },
         backupRoot: normalizeBackupRootSummary(summary.backupRoot),
         archive: {
@@ -1195,7 +1204,7 @@ async function removeDirectorySafe(targetPath) {
 }
 
 function repoApiPath(config, memberContext = null) {
-    const context = memberContext || repositoryPool.resolveMemberContext(config);
+    const context = memberContext || config?.__memberContext || repositoryPool.resolveMemberContext(config);
     const repo = parseRepoInput(context.repo);
     return {
         repo,
@@ -1215,7 +1224,7 @@ function createPoolStore(config) {
 
 async function requestGitHub(config, endpoint, options = {}) {
     const fetchFn = await getFetchFn();
-    const memberContext = options.memberContext || repositoryPool.resolveMemberContext(config);
+    const memberContext = options.memberContext || config?.__memberContext || repositoryPool.resolveMemberContext(config);
     const url = endpoint.startsWith('http') ? endpoint : `${GITHUB_API_ROOT}${endpoint}`;
     const method = options.method || 'GET';
     const headers = {
@@ -1370,7 +1379,7 @@ async function initializeRepositoryContents(config, repoPath, defaultBranch, mem
     });
 }
 
-async function ensureRepositoryReady(config) {
+async function ensureRepositoryReady(config, { ensurePool = true } = {}) {
     const memberContext = repositoryPool.resolveMemberContext(config);
     const repoInfoPath = repoApiPath(config, memberContext);
     const repoInfo = await requestGitHub(config, repoInfoPath.path, { memberContext });
@@ -1414,6 +1423,14 @@ async function ensureRepositoryReady(config) {
                 lastBootstrapError.details || lastBootstrapError.message,
             );
         }
+    }
+
+    if (!ensurePool) {
+        return {
+            ...repoInfoPath,
+            defaultBranch,
+            memberContext: verifiedMemberContext,
+        };
     }
 
     const releases = await listAllReleases(config);
@@ -2472,6 +2489,9 @@ function summarizeBackupForResponse(releaseId, tagName, summary, publishedAt) {
         note: summary.note,
         automatic: Boolean(summary.automatic),
         createdAt: summary.createdAt,
+        laneId: summary.laneId,
+        segmentId: summary.segmentId,
+        repositoryId: summary.repositoryId,
         device: summary.device,
         backupRoot: summary.backupRoot,
         archive: summary.archive,
@@ -2480,6 +2500,84 @@ function summarizeBackupForResponse(releaseId, tagName, summary, publishedAt) {
         draft: false,
         prerelease: false,
     };
+}
+
+function cachePoolDescriptor(config, descriptor, sha) {
+    if (!config.__poolConfig) return;
+    config.__poolConfig.descriptorCache = {
+        revision: descriptor.revision,
+        sha,
+        fetchedAt: new Date().toISOString(),
+        stale: false,
+        descriptor,
+    };
+}
+
+async function reserveBackupMember(config, catalogState, options = {}) {
+    let descriptor = catalogState.poolDescriptor;
+    const identity = {
+        backupRoot: getBackupRootInfo(config).root,
+        deviceId: config.deviceId,
+        deviceName: config.deviceName,
+    };
+    const poolStore = createPoolStore(config);
+    const catalogContext = repositoryPool.resolveMemberContext(config);
+    let resolved = repositoryPool.resolveBackupReservation(descriptor, identity);
+
+    if (resolved.match === 'device-name' && resolved.lane.identity.deviceId !== config.deviceId) {
+        const aliased = await poolStore.updateDescriptor(catalogContext, {
+            type: 'add-device-alias',
+            laneId: resolved.laneId,
+            deviceId: config.deviceId,
+        });
+        descriptor = aliased.descriptor;
+        cachePoolDescriptor(config, descriptor, aliased.sha);
+        resolved = repositoryPool.resolveBackupReservation(descriptor, identity);
+    }
+
+    if (!resolved.reservation) {
+        const candidates = descriptor.members.filter((member) => member.membershipState === 'active');
+        const requestedRepositoryId = trimToEmpty(options.repositoryId);
+        let selected = requestedRepositoryId
+            ? candidates.find((member) => member.repositoryId === requestedRepositoryId)
+            : null;
+        if (requestedRepositoryId && !selected) {
+            throw buildError('选择的备份仓库不是可写的 pool member。');
+        }
+        if (!selected && candidates.length === 1) selected = candidates[0];
+        if (!selected) {
+            throw buildError('多个仓库的容量统计尚未完整，请明确选择新备份序列使用的仓库。', 409);
+        }
+        const created = repositoryPool.createLaneReservation({
+            ...identity,
+            repositoryId: selected.repositoryId,
+            idFactory: createId,
+        });
+        const updated = await poolStore.updateDescriptor(catalogContext, {
+            type: 'create-lane',
+            laneId: created.laneId,
+            lane: created.lane,
+        });
+        descriptor = updated.descriptor;
+        cachePoolDescriptor(config, descriptor, updated.sha);
+        resolved = repositoryPool.resolveBackupReservation(descriptor, identity);
+    }
+
+    const targetConfig = repositoryPool.bindRuntimeConfigToMember(config, resolved.reservation.repositoryId);
+    const targetState = resolved.reservation.repositoryId === catalogContext.repositoryId
+        ? catalogState
+        : await ensureRepositoryReady(targetConfig, { ensurePool: false });
+    await saveConfig(config);
+    return { descriptor, reservation: resolved.reservation, targetConfig, targetState };
+}
+
+async function revalidateBackupReservation(config, reservation) {
+    const catalogContext = repositoryPool.resolveMemberContext(config);
+    const current = await createPoolStore(config).readDescriptor(catalogContext);
+    if (!current.exists) throw buildError('仓库池目录文件不存在。', 409);
+    repositoryPool.assertReservationCurrent(current.value, reservation);
+    cachePoolDescriptor(config, current.value, current.sha);
+    return current.value;
 }
 
 async function runBackupJob(config, options = {}) {
@@ -2496,8 +2594,10 @@ async function runBackupJob(config, options = {}) {
 
     try {
         setOperationState('正在检查旧备份');
-        const repoState = await ensureRepositoryReady(config);
-        await pruneIncomingBackupSlot(config, Boolean(options.automatic));
+        const catalogState = await ensureRepositoryReady(config);
+        const target = await reserveBackupMember(config, catalogState, options);
+        const targetConfig = target.targetConfig;
+        const repoState = target.targetState;
         setOperationState('正在扫描备份目录', {
             current: 1,
             total: 1,
@@ -2505,8 +2605,9 @@ async function runBackupJob(config, options = {}) {
         });
         const collection = await collectDataEntries(backupRootInfo);
         const chunkGroups = buildChunkGroups(collection);
+        await revalidateBackupReservation(config, target.reservation);
         setOperationState('正在准备分块仓库');
-        const storeReleases = await ensureChunkStoreReleases(config, repoState);
+        const storeReleases = await ensureChunkStoreReleases(targetConfig, repoState);
         const chunkResults = [];
 
         for (const [index, group] of chunkGroups.entries()) {
@@ -2517,7 +2618,7 @@ async function runBackupJob(config, options = {}) {
                     detail: group.rootPath,
                 });
             };
-            chunkResults.push(await createOrReuseChunk(config, repoState, storeReleases, backupRootInfo, group, tempDir, progress));
+            chunkResults.push(await createOrReuseChunk(targetConfig, repoState, storeReleases, backupRootInfo, group, tempDir, progress));
         }
 
         const meta = buildBackupMeta({
@@ -2531,12 +2632,13 @@ async function runBackupJob(config, options = {}) {
             storeReleases,
             chunkResults,
             automatic: Boolean(options.automatic),
+            reservation: target.reservation,
         });
         const summary = buildReleaseSummary(meta);
         const metaPath = path.join(tempDir, META_ASSET_NAME);
         await fsp.writeFile(metaPath, JSON.stringify(meta, null, 2));
 
-        const release = await createRelease(config, repoState, {
+        const release = await createRelease(targetConfig, repoState, {
             tagName,
             name,
             body: serializeReleaseBody(summary),
@@ -2548,9 +2650,9 @@ async function runBackupJob(config, options = {}) {
                 total: 1,
                 detail: META_ASSET_NAME,
             });
-            await uploadReleaseAsset(config, release, META_ASSET_NAME, metaPath, 'application/json');
+            await uploadReleaseAsset(targetConfig, release, META_ASSET_NAME, metaPath, 'application/json');
         } catch (uploadError) {
-            await safeDeleteRelease(config, release.id, tagName);
+            await safeDeleteRelease(targetConfig, release.id, tagName);
             throw uploadError;
         }
 
@@ -2558,7 +2660,7 @@ async function runBackupJob(config, options = {}) {
         await saveConfig(config);
 
         if (!options.automatic) {
-            await pruneManualBackups(config);
+            await pruneManualBackups(targetConfig);
         }
 
         return summarizeBackupForResponse(release.id, tagName, summary, release.published_at || createdAt);
