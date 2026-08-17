@@ -44,17 +44,7 @@
                     <p>仓库地址和访问令牌只保存在本地服务器侧。可直接粘贴 GitHub 仓库链接。</p>
                 </div>
                 <form id="config-form" class="form-grid">
-                    <label id="repo-field" class="field">
-                        <span id="repo-input-label">目录仓库</span>
-                        <input id="repo-input" name="repo" type="text" placeholder="粘贴 GitHub 仓库链接" required>
-                        <small id="repo-input-hint" class="field-hint">首次设置时选择目录仓库；仓库池建立后，这里只显示固定的 catalog，不用于切换备份写入位置。</small>
-                    </label>
-                    <label class="field">
-                        <span>GitHub Token</span>
-                        <input id="token-input" name="token" type="password" placeholder="留空则保留已保存的 token">
-                        <small id="token-hint" class="field-hint"></small>
-                    </label>
-                    <div class="field field-wide pool-members-field">
+                    <div class="field pool-members-field">
                         <div class="pool-members-heading">
                             <span>仓库池成员</span>
                             <button id="add-pool-member-btn" class="btn btn-secondary" type="button">添加仓库</button>
@@ -66,16 +56,16 @@
                             <small class="field-hint">切换只影响之后创建的完整备份，旧档案仍保留在原仓库。</small>
                         </label>
                         <div id="pool-member-editor" class="pool-member-editor hidden">
-                            <strong>添加仓库</strong>
+                            <strong id="pool-member-editor-title">添加仓库</strong>
                             <label class="field">
                                 <span>GitHub 仓库地址</span>
                                 <input id="pool-member-repo-input" type="text" placeholder="直接粘贴仓库页面链接">
                                 <small class="field-hint">支持仓库主页、设置页等完整 GitHub 链接，也支持 owner/repo。</small>
                             </label>
                             <label class="field">
-                                <span>该仓库 Token（可选）</span>
-                                <input id="pool-member-token-input" type="password" placeholder="留空则沿用上方已保存的 token">
-                                <small id="pool-member-token-hint" class="field-hint">只有该仓库需要不同权限时才填写。</small>
+                                <span id="pool-member-token-label">GitHub Token</span>
+                                <input id="pool-member-token-input" type="password">
+                                <small id="pool-member-token-hint" class="field-hint"></small>
                             </label>
                             <div class="pool-member-editor-actions">
                                 <button id="cancel-pool-member-btn" class="btn btn-secondary" type="button">取消</button>
@@ -83,15 +73,17 @@
                             </div>
                         </div>
                     </div>
-                    <label class="field">
-                        <span>当前设备名</span>
-                        <input id="device-name-input" name="deviceName" type="text" placeholder="例如 MacBook-Air">
-                    </label>
-                    <label class="field">
-                        <span>备份用户目录</span>
-                        <select id="backup-root-input" name="backupRoot"></select>
-                        <small class="field-hint">选择 SillyTavern <code>data</code> 下要备份和恢复的用户目录。</small>
-                    </label>
+                    <div class="config-basics">
+                        <label class="field">
+                            <span>当前设备名</span>
+                            <input id="device-name-input" name="deviceName" type="text" placeholder="例如 MacBook-Air">
+                        </label>
+                        <label class="field">
+                            <span>备份用户目录</span>
+                            <select id="backup-root-input" name="backupRoot"></select>
+                            <small class="field-hint">选择 SillyTavern <code>data</code> 下要备份和恢复的用户目录。</small>
+                        </label>
+                    </div>
                     <label class="field field-wide toggle-field">
                         <span>自动定时备份</span>
                         <label class="toggle-inline">

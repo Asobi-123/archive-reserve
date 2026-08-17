@@ -12,13 +12,13 @@ const app = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
 test('pool UI exposes member admission and explicit backup placement', () => {
     assert.match(html, /id="pool-member-repo-input"/);
     assert.match(html, /id="pool-member-token-input"/);
-    assert.match(html, /留空则沿用上方已保存的 token/);
+    assert.doesNotMatch(html, /id="token-input"/);
+    assert.match(html, /class="config-basics"/);
     assert.match(html, /id="backup-repository-input"/);
     assert.match(app, /apiRequest\('\/pool\/members'/);
+    assert.match(app, /configPayload\(\{ repo, token \}\)/);
     assert.match(app, /repositoryId: elements\.backupRepositoryInput\.value/);
     assert.match(app, /normalizeRepositoryInput/);
-    assert.match(app, /repoInput\.readOnly = state\.configured/);
-    assert.match(app, /repoField\.classList\.toggle\('hidden', state\.configured\)/);
     assert.doesNotMatch(app, /成员仓库<\/span>/);
     assert.doesNotMatch(app, /token 已配置/);
 });

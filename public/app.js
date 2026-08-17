@@ -53,11 +53,6 @@ function cacheElements() {
     elements.progressFill = document.getElementById('progress-fill');
     elements.progressDetail = document.getElementById('progress-detail');
     elements.configForm = document.getElementById('config-form');
-    elements.repoField = document.getElementById('repo-field');
-    elements.repoInput = document.getElementById('repo-input');
-    elements.repoInputLabel = document.getElementById('repo-input-label');
-    elements.repoInputHint = document.getElementById('repo-input-hint');
-    elements.tokenInput = document.getElementById('token-input');
     elements.deviceNameInput = document.getElementById('device-name-input');
     elements.backupRootInput = document.getElementById('backup-root-input');
     elements.autoBackupEnabledInput = document.getElementById('auto-backup-enabled-input');
@@ -66,13 +61,14 @@ function cacheElements() {
     elements.manualBackupKeepInput = document.getElementById('manual-backup-keep-input');
     elements.themeButtons = Array.from(document.querySelectorAll('.theme-btn'));
     elements.autoBackupStatus = document.getElementById('auto-backup-status');
-    elements.tokenHint = document.getElementById('token-hint');
     elements.poolMemberList = document.getElementById('pool-member-list');
     elements.poolMemberRepoInput = document.getElementById('pool-member-repo-input');
     elements.poolMemberTokenInput = document.getElementById('pool-member-token-input');
     elements.poolMemberTokenHint = document.getElementById('pool-member-token-hint');
     elements.addPoolMemberButton = document.getElementById('add-pool-member-btn');
     elements.poolMemberEditor = document.getElementById('pool-member-editor');
+    elements.poolMemberEditorTitle = document.getElementById('pool-member-editor-title');
+    elements.poolMemberTokenLabel = document.getElementById('pool-member-token-label');
     elements.confirmPoolMemberButton = document.getElementById('confirm-pool-member-btn');
     elements.cancelPoolMemberButton = document.getElementById('cancel-pool-member-btn');
     elements.activePoolRepositoryField = document.getElementById('active-pool-repository-field');
@@ -110,11 +106,10 @@ function cacheElements() {
 
 function bindEvents() {
     elements.configForm.addEventListener('submit', onSaveConfig);
-    elements.addPoolMemberButton.addEventListener('click', openPoolMemberEditor);
+    elements.addPoolMemberButton.addEventListener('click', () => openPoolMemberEditor());
     elements.confirmPoolMemberButton.addEventListener('click', () => { void onAddPoolMember(); });
     elements.cancelPoolMemberButton.addEventListener('click', closePoolMemberEditor);
     elements.activePoolRepositoryInput.addEventListener('change', () => { void onActivePoolRepositoryChange(); });
-    elements.repoInput.addEventListener('blur', () => normalizeRepositoryInput(elements.repoInput));
     elements.poolMemberRepoInput.addEventListener('blur', () => normalizeRepositoryInput(elements.poolMemberRepoInput));
     elements.poolMemberList.addEventListener('click', (event) => { void onPoolMemberListClick(event); });
     elements.backupForm.addEventListener('submit', onCreateBackup);
@@ -318,7 +313,7 @@ function renderAutoBackupStatus() {
 }
 
 function renderPoolMembers() {
-    const members = state.config?.repositories || [];
+    const members = (state.config?.repositories || []).filter((member) => member.repo);
     const laneEntry = Object.entries(state.pool?.backupLanes || {}).find(([, lane]) => (
         lane.identity?.backupRoot === (state.config?.backupRoot || '')
         && (lane.identity?.deviceId === state.config?.deviceId || lane.identity?.deviceIdAliases?.includes(state.config?.deviceId))
@@ -343,7 +338,7 @@ function renderPoolMembers() {
             const metadata = `${catalogBadge}${activeBadge}`;
             return `<div class="pool-member-row"><div class="pool-member-main"><strong>${escapeHtml(member.repo)}</strong>${metadata ? `<span class="pool-member-meta">${metadata}</span>` : ''}</div><div class="pool-member-side"><span class="pool-member-status">${escapeHtml(stateText)}</span>${action}</div></div>`;
         }).join('')
-        : '<p class="field-hint">尚未初始化仓库池。</p>';
+        : '<p class="field-hint">还没有仓库。添加第一个仓库后即可开始备份。</p>';
 
     const writableMembers = members.filter((member) => (
         member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false && member.hasToken
@@ -433,12 +428,15 @@ function normalizeRepositoryInput(input) {
 function openPoolMemberEditor() {
     elements.poolMemberEditor.classList.remove('hidden');
     elements.addPoolMemberButton.classList.add('hidden');
-    elements.poolMemberTokenInput.placeholder = state.config?.hasToken
-        ? '留空则沿用已保存的主 token'
+    elements.poolMemberEditorTitle.textContent = state.configured ? '添加仓库' : '添加第一个仓库';
+    elements.poolMemberTokenLabel.textContent = state.configured ? '该仓库 Token（可选）' : 'GitHub Token';
+    elements.poolMemberTokenInput.placeholder = state.configured
+        ? '留空则沿用第一个仓库的 token'
         : '填写可访问该仓库的 token';
-    elements.poolMemberTokenHint.textContent = state.config?.hasToken
-        ? '留空会沿用上方已保存的 token；只有该仓库需要不同权限时才填写。'
-        : '当前没有可沿用的 token，需要为该仓库填写 token。';
+    elements.poolMemberTokenHint.textContent = state.configured
+        ? '只有该仓库需要不同权限时才填写。'
+        : '这个仓库会成为第一个可用仓库和初始备份位置。';
+    elements.confirmPoolMemberButton.textContent = '校验并加入';
     elements.poolMemberRepoInput.focus();
 }
 
@@ -447,6 +445,20 @@ function closePoolMemberEditor() {
     elements.addPoolMemberButton.classList.remove('hidden');
     elements.poolMemberRepoInput.value = '';
     elements.poolMemberTokenInput.value = '';
+}
+
+function configPayload(overrides = {}) {
+    return {
+        repo: state.config?.repo || '',
+        token: '',
+        deviceName: elements.deviceNameInput.value,
+        backupRoot: elements.backupRootInput.value,
+        autoBackupEnabled: elements.autoBackupEnabledInput.checked,
+        autoBackupIntervalMinutes: elements.autoBackupIntervalInput.value,
+        autoBackupKeepCount: elements.autoBackupKeepInput.value,
+        manualBackupKeepCount: elements.manualBackupKeepInput.value,
+        ...overrides,
+    };
 }
 
 async function onAddPoolMember() {
@@ -461,11 +473,20 @@ async function onAddPoolMember() {
         return;
     }
     try {
+        if (!state.configured && !token) {
+            showToast('第一个仓库需要填写 token。', 'error');
+            return;
+        }
         setOperation('正在加入仓库池');
-        await apiRequest('/pool/members', { method: 'POST', body: { repo, token } });
+        const wasConfigured = state.configured;
+        if (wasConfigured) {
+            await apiRequest('/pool/members', { method: 'POST', body: { repo, token } });
+        } else {
+            await apiRequest('/config', { method: 'POST', body: configPayload({ repo, token }) });
+        }
         closePoolMemberEditor();
         await loadConfig();
-        showToast('仓库已加入仓库池', 'success');
+        showToast(wasConfigured ? '仓库已加入仓库池' : '第一个仓库已添加', 'success');
     } catch (error) {
         state.currentOperation = '';
         showToast(error.message || '加入仓库池失败', 'error');
@@ -712,24 +733,13 @@ async function loadConfig() {
     state.spaceStatsState = 'idle';
     state.spaceStatsError = '';
 
-    elements.repoInput.value = result.config.repo || '';
-    elements.repoInput.readOnly = state.configured;
-    elements.repoField.classList.toggle('hidden', state.configured);
-    elements.repoInputLabel.textContent = state.configured ? '目录仓库（固定）' : '首次使用的 GitHub 仓库';
-    elements.repoInputHint.textContent = state.configured
-        ? '这是仓库池 catalog 的固定位置，只负责保存成员与分段目录。请在下方选择后续备份写入仓库。'
-        : '可以直接粘贴 GitHub 仓库主页、设置页等完整链接，无需手动删减。';
-    elements.addPoolMemberButton.disabled = !state.configured;
+    elements.addPoolMemberButton.disabled = false;
     elements.deviceNameInput.value = result.config.deviceName || '';
     renderBackupRootOptions(result.config.backupRoot || '');
     elements.autoBackupEnabledInput.checked = Boolean(result.config.autoBackupEnabled);
     elements.autoBackupIntervalInput.value = String(result.config.autoBackupIntervalMinutes || 240);
     elements.autoBackupKeepInput.value = String(result.config.autoBackupKeepCount || 12);
     elements.manualBackupKeepInput.value = String(result.config.manualBackupKeepCount || 0);
-    elements.tokenInput.value = '';
-    elements.tokenHint.textContent = result.config.hasToken
-        ? `已保存 ${result.config.tokenPreview}；这里留空再保存，会继续沿用，不会清除。`
-        : '当前还没有保存 token；首次连接需要填写。';
     elements.backupRootHint.textContent = state.backupRootLabel
         ? `当前备份根目录：${state.backupRootLabel}。自动排除 .gitkeep / .DS_Store；扩展目录的 .git 会一并保留。`
         : '';
@@ -971,8 +981,6 @@ function isBusy() {
 function syncInteractivity() {
     const locked = isBusy();
 
-    elements.repoInput.disabled = locked;
-    elements.tokenInput.disabled = locked;
     elements.deviceNameInput.disabled = locked;
     elements.backupRootInput.disabled = locked;
     elements.autoBackupEnabledInput.disabled = locked;
@@ -1090,16 +1098,7 @@ async function onSaveConfig(event) {
     try {
         await apiRequest('/config', {
             method: 'POST',
-            body: {
-                repo: elements.repoInput.value,
-                token: elements.tokenInput.value,
-                deviceName: elements.deviceNameInput.value,
-                backupRoot: elements.backupRootInput.value,
-                autoBackupEnabled: elements.autoBackupEnabledInput.checked,
-                autoBackupIntervalMinutes: elements.autoBackupIntervalInput.value,
-                autoBackupKeepCount: elements.autoBackupKeepInput.value,
-                manualBackupKeepCount: elements.manualBackupKeepInput.value,
-            },
+            body: configPayload(),
         });
 
         await loadConfig();

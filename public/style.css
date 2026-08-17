@@ -1427,6 +1427,16 @@ select:focus {
     border-top: 1px solid var(--line);
 }
 
+.pool-members-field,
+.config-basics {
+    align-self: start;
+}
+
+.config-basics {
+    display: grid;
+    gap: 16px;
+}
+
 .pool-members-heading {
     display: flex;
     align-items: center;

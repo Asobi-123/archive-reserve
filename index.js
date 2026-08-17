@@ -3386,6 +3386,7 @@ const plugin = {
 
         router.post('/config', asyncRoute(async (req, res) => {
             const current = await readConfig();
+            const wasConfigured = Boolean(trimToEmpty(current.repo) && trimToEmpty(current.token));
             const repoInput = trimToEmpty(req.body?.repo);
             const tokenInput = trimToEmpty(req.body?.token);
 
@@ -3404,13 +3405,19 @@ const plugin = {
                 nextConfig.token = tokenInput;
             }
 
-            await saveConfig(nextConfig);
-            await scheduleAutoBackup(nextConfig);
+            let savedConfig = nextConfig;
+            if (!wasConfigured && trimToEmpty(nextConfig.repo) && trimToEmpty(nextConfig.token)) {
+                savedConfig = runtimeConfigFromPersisted(repositoryPool.buildV2ConfigFromLegacy(nextConfig, { idFactory: createId }));
+                await ensureRepositoryReady(savedConfig);
+            } else {
+                await saveConfig(savedConfig);
+            }
+            await scheduleAutoBackup(savedConfig);
 
             res.json({
                 ok: true,
-                config: toClientConfig(nextConfig),
-                backupRoots: await listBackupRoots(nextConfig),
+                config: toClientConfig(savedConfig),
+                backupRoots: await listBackupRoots(savedConfig),
             });
         }));
 
