@@ -1,0 +1,168 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const test = require('node:test');
+
+const {
+    applyDescriptorOperation,
+    createEmptyDescriptor,
+    repositoryMember,
+    updateDescriptorWithCas,
+} = require('../repository-pool.js');
+
+function descriptor() {
+    return {
+        ...createEmptyDescriptor({ poolId: 'pool-a', catalogRepositoryId: 'repo-a' }),
+        members: [repositoryMember({
+            repositoryId: 'repo-a',
+            githubRepositoryId: '1001',
+            repo: 'owner/archive-a',
+            addedAt: '2026-07-25T00:00:00.000Z',
+        })],
+        backupLanes: {
+            'lane-a': {
+                identity: {
+                    backupRoot: 'default-user',
+                    deviceId: 'device-a',
+                    deviceIdAliases: [],
+                    deviceNameKeyHash: 'sha256:name',
+                },
+                segments: [{
+                    segmentId: 'segment-a',
+                    repositoryId: 'repo-a',
+                    startedAt: null,
+                    reason: 'legacy-initial',
+                }],
+            },
+        },
+    };
+}
+
+test('member admission is pending, idempotent, and identity-safe', () => {
+    const pending = applyDescriptorOperation(descriptor(), {
+        type: 'add-member',
+        member: {
+            repositoryId: 'repo-b',
+            githubRepositoryId: '1002',
+            repo: 'owner/archive-b',
+            addedAt: '2026-07-25T00:00:00.000Z',
+        },
+    }, { now: '2026-07-25T00:00:01.000Z' });
+    assert.equal(pending.changed, true);
+    assert.equal(pending.descriptor.members[1].membershipState, 'pending');
+    const retry = applyDescriptorOperation(pending.descriptor, {
+        type: 'add-member',
+        member: {
+            repositoryId: 'repo-b',
+            githubRepositoryId: '1002',
+            repo: 'owner/archive-b',
+            addedAt: '2026-07-25T00:00:00.000Z',
+        },
+    });
+    assert.equal(retry.changed, false);
+    assert.throws(() => applyDescriptorOperation(pending.descriptor, {
+        type: 'add-member',
+        member: { repositoryId: 'repo-b', githubRepositoryId: '9999', repo: 'owner/other' },
+    }), (error) => error.statusCode === 409);
+});
+
+test('pending admission activates or cancels only under its safety rules', () => {
+    const added = applyDescriptorOperation(descriptor(), {
+        type: 'add-member',
+        member: { repositoryId: 'repo-b', githubRepositoryId: '1002', repo: 'owner/archive-b' },
+    }).descriptor;
+    const active = applyDescriptorOperation(added, { type: 'activate-member', repositoryId: 'repo-b' }).descriptor;
+    assert.equal(active.members[1].membershipState, 'active');
+    assert.throws(() => applyDescriptorOperation(active, {
+        type: 'cancel-pending-member', repositoryId: 'repo-b', payloadPresent: false,
+    }), (error) => error.statusCode === 409);
+
+    const pending = applyDescriptorOperation(descriptor(), {
+        type: 'add-member',
+        member: { repositoryId: 'repo-c', githubRepositoryId: '1003', repo: 'owner/archive-c' },
+    }).descriptor;
+    const cancelled = applyDescriptorOperation(pending, {
+        type: 'cancel-pending-member', repositoryId: 'repo-c', payloadPresent: false,
+    });
+    assert.equal(cancelled.descriptor.members.some((member) => member.repositoryId === 'repo-c'), false);
+});
+
+test('segment switch requires the expected active segment', () => {
+    const operation = {
+        type: 'switch-segment',
+        laneId: 'lane-a',
+        expectedActiveSegmentId: 'segment-a',
+        segment: {
+            segmentId: 'segment-b',
+            repositoryId: 'repo-b',
+            startedAt: '2026-07-25T01:00:00.000Z',
+            reason: 'manual-switch',
+        },
+    };
+    const switched = applyDescriptorOperation(descriptor(), operation);
+    assert.equal(switched.descriptor.backupLanes['lane-a'].segments.length, 2);
+    assert.throws(() => applyDescriptorOperation(switched.descriptor, operation), (error) => error.statusCode === 409);
+});
+
+test('descriptor CAS rereads and retries 409 without losing remote changes', async () => {
+    const first = descriptor();
+    const second = descriptor();
+    second.revision = 4;
+    second.members.push(repositoryMember({
+        repositoryId: 'repo-remote',
+        githubRepositoryId: '2000',
+        repo: 'owner/remote-change',
+    }));
+    let reads = 0;
+    let writes = 0;
+    let written = null;
+    const result = await updateDescriptorWithCas({
+        read: async () => ({ descriptor: reads++ === 0 ? first : second, sha: reads === 1 ? 'sha-first' : 'sha-second' }),
+        write: async ({ descriptor: next }) => {
+            writes += 1;
+            if (writes === 1) {
+                const error = new Error('conflict');
+                error.statusCode = 409;
+                throw error;
+            }
+            written = next;
+            return { sha: 'sha-written' };
+        },
+        operation: {
+            type: 'add-member',
+            member: { repositoryId: 'repo-new', githubRepositoryId: '3000', repo: 'owner/new' },
+        },
+        now: () => '2026-07-25T02:00:00.000Z',
+    });
+    assert.equal(writes, 2);
+    assert.equal(result.attempts, 2);
+    assert.equal(result.sha, 'sha-written');
+    assert.equal(written.members.some((member) => member.repositoryId === 'repo-remote'), true);
+    assert.equal(written.members.some((member) => member.repositoryId === 'repo-new'), true);
+});
+
+test('descriptor CAS does not retry non-conflict failures or exhausted conflicts', async () => {
+    await assert.rejects(updateDescriptorWithCas({
+        read: async () => ({ descriptor: descriptor(), sha: 'sha' }),
+        write: async () => { throw Object.assign(new Error('forbidden'), { statusCode: 403 }); },
+        operation: { type: 'add-member', member: { repositoryId: 'repo-b', githubRepositoryId: '1002', repo: 'owner/b' } },
+    }), (error) => error.statusCode === 403);
+
+    let attempts = 0;
+    await assert.rejects(updateDescriptorWithCas({
+        read: async () => ({ descriptor: descriptor(), sha: `sha-${attempts}` }),
+        write: async () => { attempts += 1; throw Object.assign(new Error('conflict'), { statusCode: 422 }); },
+        operation: { type: 'add-member', member: { repositoryId: 'repo-b', githubRepositoryId: '1002', repo: 'owner/b' } },
+        maxAttempts: 2,
+    }), (error) => error.statusCode === 409);
+    assert.equal(attempts, 2);
+});
+
+test('descriptor updates reject corrupt revisions before writing', () => {
+    const corrupt = descriptor();
+    corrupt.revision = 'not-a-number';
+    assert.throws(() => applyDescriptorOperation(corrupt, {
+        type: 'add-member',
+        member: { repositoryId: 'repo-b', githubRepositoryId: '1002', repo: 'owner/b' },
+    }), /revision must be a non-negative integer/);
+});

@@ -214,6 +214,114 @@ function validateMemberMarker(marker, { poolId, repositoryId, githubRepositoryId
     return true;
 }
 
+function descriptorConflict(message) {
+    const error = new Error(message);
+    error.statusCode = 409;
+    return error;
+}
+
+function clone(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+function bumpDescriptor(descriptor, now = new Date().toISOString()) {
+    const revision = Number(descriptor.revision);
+    if (!Number.isInteger(revision) || revision < 0) throw new TypeError('Descriptor revision must be a non-negative integer.');
+    descriptor.revision = revision + 1;
+    descriptor.updatedAt = now;
+    assertTokenFreeDescriptor(descriptor);
+    return descriptor;
+}
+
+function applyDescriptorOperation(descriptor, operation, { now = new Date().toISOString() } = {}) {
+    const next = clone(descriptor);
+    const type = operation?.type;
+    if (type === 'add-member') {
+        const member = repositoryMember(operation.member);
+        const existing = next.members.find((candidate) => candidate.repositoryId === member.repositoryId);
+        if (existing) {
+            if (existing.githubRepositoryId !== member.githubRepositoryId || existing.repo !== member.repo) {
+                throw descriptorConflict(`Repository member identity conflict: ${member.repositoryId}`);
+            }
+            return { descriptor: next, changed: false };
+        }
+        if (next.members.some((candidate) => (
+            candidate.githubRepositoryId === member.githubRepositoryId
+            || candidate.repo === member.repo
+        ))) {
+            throw descriptorConflict('Repository member identity is already in this pool.');
+        }
+        next.members.push({ ...member, membershipState: 'pending' });
+        return { descriptor: bumpDescriptor(next, now), changed: true };
+    }
+    if (type === 'activate-member') {
+        const member = next.members.find((candidate) => candidate.repositoryId === operation.repositoryId);
+        if (!member) throw descriptorConflict(`Unknown pending member: ${operation.repositoryId}`);
+        if (member.membershipState === 'active') return { descriptor: next, changed: false };
+        if (member.membershipState !== 'pending') throw descriptorConflict('Only pending members can be activated.');
+        member.membershipState = 'active';
+        return { descriptor: bumpDescriptor(next, now), changed: true };
+    }
+    if (type === 'cancel-pending-member') {
+        const member = next.members.find((candidate) => candidate.repositoryId === operation.repositoryId);
+        if (!member) return { descriptor: next, changed: false };
+        if (member.membershipState !== 'pending' || operation.payloadPresent) {
+            throw descriptorConflict('Only empty pending members can be cancelled.');
+        }
+        next.members = next.members.filter((candidate) => candidate.repositoryId !== operation.repositoryId);
+        return { descriptor: bumpDescriptor(next, now), changed: true };
+    }
+    if (type === 'create-lane') {
+        if (next.backupLanes[operation.laneId]) return { descriptor: next, changed: false };
+        const identity = operation.lane?.identity;
+        if (!identity) throw new TypeError('Lane identity is required.');
+        const duplicate = Object.values(next.backupLanes).some((lane) => (
+            lane.identity.backupRoot === identity.backupRoot
+            && lane.identity.deviceId === identity.deviceId
+        ));
+        if (duplicate) throw descriptorConflict('A lane already owns this backup root and device ID.');
+        next.backupLanes[operation.laneId] = clone(operation.lane);
+        return { descriptor: bumpDescriptor(next, now), changed: true };
+    }
+    if (type === 'switch-segment') {
+        const lane = next.backupLanes[operation.laneId];
+        if (!lane) throw descriptorConflict(`Unknown lane: ${operation.laneId}`);
+        const active = lane.segments[lane.segments.length - 1];
+        if (!active || active.segmentId !== operation.expectedActiveSegmentId) {
+            throw descriptorConflict('Active segment changed; retry the switch.');
+        }
+        if (!operation.segment?.segmentId || !operation.segment.repositoryId || !operation.segment.startedAt) {
+            throw new TypeError('A new segment needs an ID, member, and start time.');
+        }
+        lane.segments.push(clone(operation.segment));
+        return { descriptor: bumpDescriptor(next, now), changed: true };
+    }
+    throw new TypeError(`Unknown descriptor operation: ${type}`);
+}
+
+async function updateDescriptorWithCas({ read, write, operation, maxAttempts = 3, now = () => new Date().toISOString() }) {
+    if (typeof read !== 'function' || typeof write !== 'function') {
+        throw new TypeError('Descriptor CAS requires read and write functions.');
+    }
+    let lastConflict = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const snapshot = await read();
+        assertTokenFreeDescriptor(snapshot.descriptor);
+        const applied = applyDescriptorOperation(snapshot.descriptor, operation, { now: now() });
+        if (!applied.changed) return { ...snapshot, descriptor: applied.descriptor, attempts: attempt };
+        try {
+            const written = await write({ descriptor: applied.descriptor, sha: snapshot.sha });
+            return { descriptor: applied.descriptor, sha: written?.sha || snapshot.sha, attempts: attempt };
+        } catch (error) {
+            if (error?.statusCode !== 409 && error?.statusCode !== 422) throw error;
+            lastConflict = error;
+        }
+    }
+    const error = descriptorConflict('Descriptor update conflicted repeatedly; retry later.');
+    error.cause = lastConflict;
+    throw error;
+}
+
 function laneFromGroup(group, { idFactory = createId, repositoryId = '' } = {}) {
     const first = group[0];
     const deviceName = trim(first.device?.name);
@@ -375,6 +483,8 @@ module.exports = {
     toRuntimeConfig,
     verifyGitHubRepositoryIdentity,
     buildMemberMarker,
+    applyDescriptorOperation,
     validateMemberMarker,
+    updateDescriptorWithCas,
     writeJsonAtomically,
 };
