@@ -41,10 +41,10 @@
             <section class="panel tab-page" data-ar-page="config">
                 <div class="panel-head">
                     <h2>仓库设置</h2>
-                    <p>仓库池目录与成员分开管理。仓库地址可以直接粘贴 GitHub 页面链接。</p>
+                    <p>仓库地址和访问令牌只保存在本地服务器侧。可直接粘贴 GitHub 仓库链接。</p>
                 </div>
                 <form id="config-form" class="form-grid">
-                    <label class="field">
+                    <label id="repo-field" class="field">
                         <span id="repo-input-label">目录仓库</span>
                         <input id="repo-input" name="repo" type="text" placeholder="粘贴 GitHub 仓库链接" required>
                         <small id="repo-input-hint" class="field-hint">首次设置时选择目录仓库；仓库池建立后，这里只显示固定的 catalog，不用于切换备份写入位置。</small>
@@ -82,7 +82,6 @@
                                 <button id="confirm-pool-member-btn" class="btn btn-primary" type="button">校验并加入</button>
                             </div>
                         </div>
-                        <small class="field-hint">加入前会校验仓库身份；已有 Archive Reserve 内容的仓库不会自动采纳。</small>
                     </div>
                     <label class="field">
                         <span>当前设备名</span>

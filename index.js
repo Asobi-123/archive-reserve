@@ -1645,7 +1645,7 @@ async function addPoolMember(config, { repo, token }) {
         if (marker.exists || remoteDescriptor.exists || releases.some((release) => (
             release.tag_name?.startsWith(RELEASE_TAG_PREFIX) || isChunkStoreRelease(release)
         ))) {
-            throw buildError('目标仓库已有 Archive Reserve 内容，不能自动加入当前仓库池。', 409);
+            throw buildError('这个仓库已有 Archive Reserve 备份，未作任何更改。请改用空仓库。', 409);
         }
     }
 

@@ -53,6 +53,7 @@ function cacheElements() {
     elements.progressFill = document.getElementById('progress-fill');
     elements.progressDetail = document.getElementById('progress-detail');
     elements.configForm = document.getElementById('config-form');
+    elements.repoField = document.getElementById('repo-field');
     elements.repoInput = document.getElementById('repo-input');
     elements.repoInputLabel = document.getElementById('repo-input-label');
     elements.repoInputHint = document.getElementById('repo-input-hint');
@@ -326,18 +327,21 @@ function renderPoolMembers() {
     elements.poolMemberList.innerHTML = members.length
         ? members.map((member) => {
             const stateText = member.membershipState !== 'active'
-                ? member.membershipState
-                : member.lastKnownState?.writeEligible === false ? '不可写' : member.lastKnownState?.readable === false ? '不可读' : 'active';
+                ? '待完成'
+                : !member.hasToken ? '缺少 token'
+                    : member.lastKnownState?.writeEligible === false ? '不可写'
+                        : member.lastKnownState?.readable === false ? '不可读' : '可用';
             const action = member.membershipState === 'pending'
                 ? `<button class="btn btn-secondary" type="button" data-action="cancel-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}">取消加入</button>`
-                : `<span class="pool-member-token-state">${member.hasToken ? 'token 已配置' : '缺少 token'}</span>`;
+                : '';
             const catalogBadge = member.repositoryId === state.config?.catalogRepositoryId
                 ? '<span class="pool-member-badge">目录仓库</span>'
-                : '<span class="pool-member-badge">成员仓库</span>';
+                : '';
             const activeBadge = activeSegment?.repositoryId === member.repositoryId
                 ? '<span class="pool-member-badge is-current">当前写入</span>'
                 : '';
-            return `<div class="pool-member-row"><div class="pool-member-main"><strong>${escapeHtml(member.repo)}</strong><span>${catalogBadge}${activeBadge}</span></div><span class="pool-member-status">${escapeHtml(stateText)}</span>${action}</div>`;
+            const metadata = `${catalogBadge}${activeBadge}`;
+            return `<div class="pool-member-row"><div class="pool-member-main"><strong>${escapeHtml(member.repo)}</strong>${metadata ? `<span class="pool-member-meta">${metadata}</span>` : ''}</div><div class="pool-member-side"><span class="pool-member-status">${escapeHtml(stateText)}</span>${action}</div></div>`;
         }).join('')
         : '<p class="field-hint">尚未初始化仓库池。</p>';
 
@@ -710,6 +714,7 @@ async function loadConfig() {
 
     elements.repoInput.value = result.config.repo || '';
     elements.repoInput.readOnly = state.configured;
+    elements.repoField.classList.toggle('hidden', state.configured);
     elements.repoInputLabel.textContent = state.configured ? '目录仓库（固定）' : '首次使用的 GitHub 仓库';
     elements.repoInputHint.textContent = state.configured
         ? '这是仓库池 catalog 的固定位置，只负责保存成员与分段目录。请在下方选择后续备份写入仓库。'

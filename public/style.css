@@ -1436,17 +1436,18 @@ select:focus {
 
 .pool-member-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    gap: 12px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 10px;
     align-items: center;
-    padding: 12px 0;
+    min-height: 52px;
+    padding: 8px 4px;
     border-bottom: 1px solid var(--line);
 }
 
 .pool-member-main {
     min-width: 0;
     display: grid;
-    gap: 5px;
+    gap: 4px;
 }
 
 .pool-member-main strong {
@@ -1455,10 +1456,26 @@ select:focus {
     white-space: nowrap;
 }
 
-.pool-member-main > span {
+.pool-member-meta {
     display: flex;
+    align-items: center;
     flex-wrap: wrap;
     gap: 6px;
+    color: var(--muted);
+    font-size: 0.76rem;
+}
+
+.pool-member-side {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.pool-member-status {
+    color: var(--muted);
+    font-size: 0.82rem;
 }
 
 .pool-member-badge {
@@ -1478,10 +1495,9 @@ select:focus {
     background: var(--accent-soft);
 }
 
-.pool-member-status,
-.pool-member-token-state {
-    color: var(--muted);
-    font-size: 0.82rem;
+.pool-member-side > .btn {
+    padding: 0.55rem 0.75rem;
+    font-size: 0.78rem;
 }
 
 .pool-member-editor {
@@ -1501,10 +1517,22 @@ select:focus {
 
 @media (max-width: 720px) {
     .pool-member-row {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr) auto;
+        min-height: 48px;
+        padding: 7px 2px;
     }
 
     .pool-members-heading {
-        align-items: flex-start;
+        align-items: center;
+    }
+
+    .pool-member-main strong {
+        font-size: 0.94rem;
+    }
+
+    .pool-member-badge {
+        min-height: 19px;
+        padding: 1px 6px;
+        font-size: 0.7rem;
     }
 }

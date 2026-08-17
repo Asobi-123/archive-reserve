@@ -18,6 +18,9 @@ test('pool UI exposes member admission and explicit backup placement', () => {
     assert.match(app, /repositoryId: elements\.backupRepositoryInput\.value/);
     assert.match(app, /normalizeRepositoryInput/);
     assert.match(app, /repoInput\.readOnly = state\.configured/);
+    assert.match(app, /repoField\.classList\.toggle\('hidden', state\.configured\)/);
+    assert.doesNotMatch(app, /成员仓库<\/span>/);
+    assert.doesNotMatch(app, /token 已配置/);
 });
 
 test('backup actions retain repository identity and partial state', () => {
