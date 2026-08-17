@@ -9,6 +9,7 @@ const { pipeline } = require('node:stream/promises');
 const archiver = require('archiver');
 const express = require('express');
 const yauzl = require('yauzl');
+const repositoryPool = require('./repository-pool');
 
 const info = {
     id: 'archive-reserve',
@@ -425,38 +426,39 @@ async function tryMigrateConfig(sourcePath, label) {
     try {
         const legacyContent = await fsp.readFile(sourcePath, 'utf8');
         const legacyParsed = JSON.parse(legacyContent);
-        const migrated = normalizeConfig(legacyParsed);
+        const persisted = repositoryPool.buildV2ConfigFromLegacy(legacyParsed, { idFactory: createId });
+        const migrated = runtimeConfigFromPersisted(persisted);
         await saveConfig(migrated);
         console.log(`[archive-reserve] 已迁移${label}配置到 ${CONFIG_PATH}`);
         return migrated;
     } catch (error) {
-        if (error.code && error.code !== 'ENOENT') {
-            console.warn(`[archive-reserve] 读取${label}配置失败，将尝试其他位置：`, error.message);
-        }
-        return null;
+        if (error.code === 'ENOENT') return null;
+        throw buildError(`读取${label}配置失败，原文件未被覆盖。`, 500, error.message);
     }
+}
+
+function runtimeConfigFromPersisted(persisted) {
+    const runtime = normalizeConfig(repositoryPool.toRuntimeConfig(persisted));
+    Object.defineProperty(runtime, '__poolConfig', {
+        value: persisted,
+        enumerable: false,
+        writable: true,
+    });
+    return runtime;
 }
 
 async function readConfig() {
     try {
         const content = await fsp.readFile(CONFIG_PATH, 'utf8');
         const parsed = JSON.parse(content);
-        const next = normalizeConfig(parsed);
-        let changed = false;
-
-        if (!next.deviceId) {
-            next.deviceId = createId();
-            changed = true;
-        }
-
-        if (!next.deviceName) {
-            next.deviceName = getDefaultDeviceName();
-            changed = true;
-        }
-
-        if (parsed.backupRoot !== next.backupRoot) {
-            changed = true;
-        }
+        const persisted = Number(parsed.configVersion) === 2
+            ? repositoryPool.normalizeV2Config(parsed)
+            : repositoryPool.buildV2ConfigFromLegacy(parsed, { idFactory: createId });
+        const next = runtimeConfigFromPersisted(persisted);
+        const changed = Number(parsed.configVersion) !== 2
+            || parsed.backupRoot !== next.backupRoot
+            || parsed.deviceId !== next.deviceId
+            || parsed.deviceName !== next.deviceName;
 
         if (changed) {
             await saveConfig(next);
@@ -476,8 +478,9 @@ async function readConfig() {
             }
         }
 
-        if (error.code && error.code !== 'ENOENT') {
-            console.warn('[archive-reserve] 读取配置失败，将生成新配置：', error.message);
+        if (error.code !== 'ENOENT') {
+            if (error.statusCode) throw error;
+            throw buildError('读取配置失败，原文件未被覆盖。', 500, error.message);
         }
 
         const initialConfig = {
@@ -485,14 +488,27 @@ async function readConfig() {
             deviceId: createId(),
             deviceName: getDefaultDeviceName(),
         };
-        await saveConfig(initialConfig);
-        return initialConfig;
+        const persisted = repositoryPool.buildV2ConfigFromLegacy(initialConfig, { idFactory: createId });
+        const runtime = runtimeConfigFromPersisted(persisted);
+        await saveConfig(runtime);
+        return runtime;
     }
 }
 
 async function saveConfig(config) {
     await fsp.mkdir(STORAGE_DIR, { recursive: true });
-    await fsp.writeFile(CONFIG_PATH, JSON.stringify(config, null, 2));
+    let persisted;
+    if (config?.__poolConfig) {
+        persisted = repositoryPool.serializeRuntimeConfig(config);
+    } else if (Number(config?.configVersion) === 2) {
+        persisted = repositoryPool.normalizeV2Config(config);
+        persisted.defaultToken = trimToEmpty(config.token) || persisted.defaultToken;
+        const catalog = persisted.repositories.find((member) => member.repositoryId === persisted.catalogRepositoryId);
+        if (catalog && trimToEmpty(config.repo)) catalog.repo = parseRepoInput(config.repo).slug;
+    } else {
+        persisted = repositoryPool.buildV2ConfigFromLegacy(config, { idFactory: createId });
+    }
+    await repositoryPool.writeJsonAtomically(CONFIG_PATH, persisted);
 }
 
 function clearAutoBackupTimer() {

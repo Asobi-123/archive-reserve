@@ -14,6 +14,8 @@ const {
     createEmptyDescriptor,
     findLane,
     normalizeV2Config,
+    serializeRuntimeConfig,
+    toRuntimeConfig,
     writeJsonAtomically,
 } = require('../repository-pool.js');
 
@@ -67,6 +69,24 @@ test('normalizes only a valid v2 config and rejects catalog drift', () => {
         catalogRepositoryId: 'repo-missing',
         repositories: [],
     }), /Catalog repository/);
+});
+
+test('projects v2 config to legacy runtime fields without persisting legacy token fields', () => {
+    const persisted = buildV2ConfigFromLegacy({
+        repo: 'owner/archive-a',
+        token: 'secret-token',
+        deviceId: 'device-a',
+    }, { idFactory: idFactory(), githubRepositoryId: '1001' });
+    const runtime = toRuntimeConfig(persisted);
+    assert.equal(runtime.repo, 'owner/archive-a');
+    assert.equal(runtime.token, 'secret-token');
+    runtime.repo = 'owner/archive-renamed';
+    runtime.token = 'new-secret-token';
+    const next = serializeRuntimeConfig(runtime);
+    assert.equal(next.defaultToken, 'new-secret-token');
+    assert.equal(next.repositories[0].repo, 'owner/archive-renamed');
+    assert.equal(Object.prototype.hasOwnProperty.call(next, 'repo'), false);
+    assert.equal(Object.prototype.hasOwnProperty.call(next, 'token'), false);
 });
 
 test('builds legacy lanes conservatively and preserves a negative-infinity segment', () => {

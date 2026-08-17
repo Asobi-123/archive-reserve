@@ -110,6 +110,52 @@ function normalizeV2Config(input) {
     };
 }
 
+function toRuntimeConfig(v2) {
+    const normalized = normalizeV2Config(v2);
+    const catalog = normalized.repositories.find((member) => member.repositoryId === normalized.catalogRepositoryId);
+    if (!catalog) throw new TypeError('Catalog repository is not a configured member.');
+    const runtime = {
+        configVersion: 2,
+        poolId: normalized.poolId,
+        catalogRepositoryId: normalized.catalogRepositoryId,
+        repositories: normalized.repositories,
+        descriptorCache: normalized.descriptorCache,
+        repo: catalog.repo,
+        token: catalog.tokenOverride || normalized.defaultToken,
+        backupRoot: normalized.backupRoot,
+        deviceId: normalized.deviceId,
+        deviceName: normalized.deviceName,
+        lastBackupAt: normalized.lastBackupAt,
+        autoBackupEnabled: normalized.autoBackupEnabled,
+        autoBackupIntervalMinutes: normalized.autoBackupIntervalMinutes,
+        autoBackupKeepCount: normalized.autoBackupKeepCount,
+        manualBackupKeepCount: normalized.manualBackupKeepCount,
+    };
+    Object.defineProperty(runtime, '__poolConfig', {
+        value: normalized,
+        enumerable: false,
+        writable: true,
+    });
+    return runtime;
+}
+
+function serializeRuntimeConfig(runtime) {
+    if (!runtime?.__poolConfig) return runtime;
+    const pool = JSON.parse(JSON.stringify(runtime.__poolConfig));
+    pool.backupRoot = runtime.backupRoot;
+    pool.deviceId = runtime.deviceId;
+    pool.deviceName = runtime.deviceName;
+    pool.lastBackupAt = runtime.lastBackupAt;
+    pool.autoBackupEnabled = runtime.autoBackupEnabled;
+    pool.autoBackupIntervalMinutes = runtime.autoBackupIntervalMinutes;
+    pool.autoBackupKeepCount = runtime.autoBackupKeepCount;
+    pool.manualBackupKeepCount = runtime.manualBackupKeepCount;
+    pool.defaultToken = trim(runtime.token);
+    const catalog = pool.repositories.find((member) => member.repositoryId === pool.catalogRepositoryId);
+    if (catalog) catalog.repo = trim(runtime.repo);
+    return normalizeV2Config(pool);
+}
+
 function laneFromGroup(group, { idFactory = createId, repositoryId = '' } = {}) {
     const first = group[0];
     const deviceName = trim(first.device?.name);
@@ -266,5 +312,7 @@ module.exports = {
     normalizeDeviceKey,
     normalizeV2Config,
     repositoryMember,
+    serializeRuntimeConfig,
+    toRuntimeConfig,
     writeJsonAtomically,
 };
