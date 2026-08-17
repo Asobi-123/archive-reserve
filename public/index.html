@@ -50,7 +50,7 @@
                     <p><strong>主仓库</strong>是第一次添加的仓库，负责保存仓库池配置；它不代表所有新备份都会写到这里。</p>
                     <p>多台设备可以使用同一仓库，并查看或恢复彼此创建的备份。</p>
                     <p>添加多个仓库会增加可用容量。系统不会拆分一份备份，也不会在仓库之间自动均衡。</p>
-                    <p>每台设备第一次创建备份时选择写入仓库，以后可在这里切换。新仓库的第一份备份需要建立可复用数据，因此耗时更长。</p>
+                    <p>每台设备第一次创建备份时选择写入仓库，以后可在这里切换。仓库第一次承载备份时需要建立可复用数据；切回使用过的仓库会继续复用其中已有分块。</p>
                 </div>
                 <form id="config-form" class="form-grid">
                     <div class="field pool-members-field">
@@ -62,7 +62,7 @@
                         <label id="active-pool-repository-field" class="field hidden">
                             <span>当前写入仓库</span>
                             <select id="active-pool-repository-input"></select>
-                            <small class="field-hint">选择这台设备接下来创建备份时使用的仓库。切换到新仓库后的第一份备份会更久。</small>
+                            <small class="field-hint">选择这台设备接下来创建备份时使用的仓库。首次使用的仓库会上传更多数据；切回使用过的仓库会复用已有分块。</small>
                         </label>
                         <div id="pool-member-editor" class="pool-member-editor hidden">
                             <strong id="pool-member-editor-title">添加仓库</strong>

@@ -394,7 +394,7 @@ async function onActivePoolRepositoryChange() {
     const previousRepositoryId = state.pool?.backupLanes?.[select.dataset.laneId]?.segments?.at(-1)?.repositoryId || '';
     const repositoryId = select.value;
     if (!repositoryId || repositoryId === previousRepositoryId) return;
-    if (isBusy() || !window.confirm('之后创建的备份将写入所选仓库。该仓库的第一份备份需要建立可复用数据。确定切换吗？')) {
+    if (isBusy() || !window.confirm('之后创建的备份将写入所选仓库。首次使用的仓库会上传更多数据；使用过的仓库会复用已有分块。确定切换吗？')) {
         select.value = previousRepositoryId;
         return;
     }

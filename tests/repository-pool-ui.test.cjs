@@ -19,7 +19,7 @@ test('pool UI exposes member admission and explicit backup placement', () => {
     assert.match(html, /id="pool-guide" class="pool-guide hidden"/);
     assert.match(html, /多台设备可以使用同一仓库/);
     assert.match(html, /不会在仓库之间自动均衡/);
-    assert.match(html, /新仓库的第一份备份需要建立可复用数据/);
+    assert.match(html, /切回使用过的仓库会继续复用其中已有分块/);
     assert.match(html, /id="backup-repository-input"/);
     assert.match(app, /apiRequest\('\/pool\/members'/);
     assert.match(app, /configPayload\(\{ repo, token \}\)/);
