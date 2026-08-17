@@ -174,6 +174,7 @@ function createRepositoryPoolStore({ request }) {
 
     return {
         ensureCatalog,
+        ensureMarker,
         readDescriptor,
         readJson,
         syncDescriptorMirror,

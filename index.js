@@ -315,6 +315,15 @@ function toClientConfig(config) {
         autoBackupIntervalMinutes: normalizeAutoBackupInterval(config.autoBackupIntervalMinutes),
         autoBackupKeepCount: normalizeAutoBackupKeepCount(config.autoBackupKeepCount),
         manualBackupKeepCount: normalizeManualBackupKeepCount(config.manualBackupKeepCount),
+        poolId: config.__poolConfig?.poolId || '',
+        catalogRepositoryId: config.__poolConfig?.catalogRepositoryId || '',
+        repositories: (config.__poolConfig?.repositories || []).map((member) => ({
+            repositoryId: member.repositoryId,
+            repo: member.repo,
+            membershipState: member.membershipState,
+            hasToken: Boolean(member.tokenOverride || config.__poolConfig.defaultToken),
+            lastKnownState: member.lastKnownState || null,
+        })),
     };
 }
 
@@ -1392,7 +1401,7 @@ async function initializeRepositoryContents(config, repoPath, defaultBranch, mem
 }
 
 async function ensureRepositoryReady(config, { ensurePool = true } = {}) {
-    const memberContext = repositoryPool.resolveMemberContext(config);
+    const memberContext = config.__memberContext || repositoryPool.resolveMemberContext(config);
     const repoInfoPath = repoApiPath(config, memberContext);
     const repoInfo = await requestGitHub(config, repoInfoPath.path, { memberContext });
     let verifiedMemberContext = repositoryPool.verifyGitHubRepositoryIdentity(memberContext, repoInfo);
@@ -1604,6 +1613,150 @@ async function resolveBackupSourceConfig(config, repositoryId, { allowStale = tr
         repositoryId: resolved.member.repositoryId,
         member: resolved.member,
         freshness: { stale: snapshot.stale, error: snapshot.error?.message || null },
+    };
+}
+
+async function listReleasesForContext(config, context) {
+    const releases = [];
+    const repoPath = repoApiPath(config, context).path;
+    for (let page = 1; ; page += 1) {
+        const batch = await requestGitHub(config, `${repoPath}/releases?per_page=100&page=${page}`, { memberContext: context });
+        if (!Array.isArray(batch)) throw buildError('GitHub releases 响应格式无效。', 502);
+        releases.push(...batch);
+        if (batch.length < 100) return releases;
+    }
+}
+
+async function addPoolMember(config, { repo, token }) {
+    const catalogState = await ensureRepositoryReady(config);
+    const descriptor = catalogState.poolDescriptor;
+    const parsedRepo = parseRepoInput(repo);
+    const repositoryId = `repo-${createId()}`;
+    const proposedContext = {
+        repositoryId,
+        githubRepositoryId: '',
+        repo: parsedRepo.slug,
+        token: trimToEmpty(token) || config.token,
+        membershipState: 'pending',
+    };
+    if (!proposedContext.token) throw buildError('新仓库没有可用 token。', 403);
+    const repoInfo = await requestGitHub(config, repoApiPath(config, proposedContext).path, { memberContext: proposedContext });
+    const verified = repositoryPool.verifyGitHubRepositoryIdentity(proposedContext, repoInfo);
+    const existing = descriptor.members.find((member) => String(member.githubRepositoryId) === verified.githubRepositoryId);
+    if (existing?.membershipState === 'active') {
+        let local = config.__poolConfig.repositories.find((member) => member.repositoryId === existing.repositoryId);
+        if (!local) {
+            local = repositoryPool.repositoryMember({
+                ...existing,
+                tokenOverride: trimToEmpty(token),
+            });
+            config.__poolConfig.repositories.push(local);
+        }
+        local.repo = parsedRepo.slug;
+        if (trimToEmpty(token)) local.tokenOverride = trimToEmpty(token);
+        await saveConfig(config);
+        return { member: existing, resumed: true, mirrorResults: [] };
+    }
+
+    const memberId = existing?.repositoryId || repositoryId;
+    const memberContext = { ...verified, repositoryId: memberId };
+    const store = createPoolStore(config);
+    if (!existing) {
+        const [marker, remoteDescriptor, releases] = await Promise.all([
+            store.readJson(memberContext, MARKER_PATH),
+            store.readDescriptor(memberContext),
+            listReleasesForContext(config, memberContext),
+        ]);
+        if (marker.exists || remoteDescriptor.exists || releases.some((release) => (
+            release.tag_name?.startsWith(RELEASE_TAG_PREFIX) || isChunkStoreRelease(release)
+        ))) {
+            throw buildError('目标仓库已有 Archive Reserve 内容，不能自动加入当前仓库池。', 409);
+        }
+    }
+
+    const catalogContext = repositoryPool.resolveMemberContext(config);
+    const pending = existing ? { descriptor, sha: catalogState.poolDescriptorSha } : await store.updateDescriptor(catalogContext, {
+        type: 'add-member',
+        member: {
+            repositoryId: memberId,
+            githubRepositoryId: memberContext.githubRepositoryId,
+            repo: memberContext.repo,
+            addedAt: new Date().toISOString(),
+        },
+    });
+    let local = config.__poolConfig.repositories.find((member) => member.repositoryId === memberId);
+    if (!local) {
+        local = repositoryPool.repositoryMember({
+            repositoryId: memberId,
+            githubRepositoryId: memberContext.githubRepositoryId,
+            repo: memberContext.repo,
+            tokenOverride: trimToEmpty(token),
+            membershipState: 'pending',
+        });
+        config.__poolConfig.repositories.push(local);
+    }
+    const bound = repositoryPool.bindRuntimeConfigToMember(config, memberId);
+    await ensureRepositoryReady(bound, { ensurePool: false });
+    await store.ensureMarker(memberContext, repositoryPool.buildMemberMarker({
+        poolId: pending.descriptor.poolId,
+        catalogRepositoryId: pending.descriptor.catalogRepositoryId,
+        context: memberContext,
+    }));
+    await store.syncDescriptorMirror(memberContext, pending.descriptor);
+    const activated = await store.updateDescriptor(catalogContext, { type: 'activate-member', repositoryId: memberId });
+    local.membershipState = 'active';
+    cachePoolDescriptor(config, activated.descriptor, activated.sha);
+    const contexts = activated.descriptor.members
+        .filter((member) => member.membershipState === 'active')
+        .map((member) => repositoryPool.resolveMemberContext(config, member.repositoryId));
+    const mirrorResults = await store.syncDescriptorMirrors(contexts, activated.descriptor);
+    const newMirror = mirrorResults.find((result) => result.repositoryId === memberId);
+    local.lastKnownState = {
+        readable: true,
+        catalogSynced: Boolean(newMirror?.synced),
+        writeEligible: Boolean(newMirror?.synced) && repoInfo.permissions?.push === true,
+        lastValidatedAt: new Date().toISOString(),
+    };
+    await saveConfig(config);
+    return {
+        member: activated.descriptor.members.find((member) => member.repositoryId === memberId),
+        resumed: Boolean(existing),
+        mirrorResults: mirrorResults.map(({ error, ...result }) => ({ ...result, error: error?.message || null })),
+    };
+}
+
+async function switchPoolLane(config, { laneId, repositoryId, expectedSegmentId }) {
+    const catalogState = await ensureRepositoryReady(config);
+    const descriptor = catalogState.poolDescriptor;
+    const lane = descriptor.backupLanes?.[laneId];
+    const active = lane?.segments?.[lane.segments.length - 1];
+    if (!active) throw buildError('备份序列不存在。', 404);
+    if (active.segmentId !== expectedSegmentId) throw buildError('活动分段已变化，请刷新后重试。', 409);
+    const target = repositoryPool.resolveWriteEligibleMember(config, descriptor, repositoryId);
+    await assertMemberWriteEligible(config, descriptor, target.context);
+    const catalogContext = repositoryPool.resolveMemberContext(config);
+    const store = createPoolStore(config);
+    const updated = await store.updateDescriptor(catalogContext, {
+        type: 'switch-segment',
+        laneId,
+        expectedActiveSegmentId: expectedSegmentId,
+        segment: {
+            segmentId: `segment-${createId()}`,
+            repositoryId,
+            startedAt: new Date().toISOString(),
+            reason: 'manual-switch',
+        },
+    });
+    cachePoolDescriptor(config, updated.descriptor, updated.sha);
+    const contexts = updated.descriptor.members
+        .filter((member) => member.membershipState === 'active')
+        .map((member) => repositoryPool.resolveMemberContext(config, member.repositoryId));
+    const mirrorResults = await store.syncDescriptorMirrors(contexts, updated.descriptor);
+    await saveConfig(config);
+    return {
+        laneId,
+        segment: updated.descriptor.backupLanes[laneId].segments.at(-1),
+        mirrorResults: mirrorResults.map(({ error, ...result }) => ({ ...result, error: error?.message || null })),
     };
 }
 
@@ -3255,6 +3408,45 @@ const plugin = {
                 config: toClientConfig(nextConfig),
                 backupRoots: await listBackupRoots(nextConfig),
             });
+        }));
+
+        router.get('/pool', asyncRoute(async (req, res) => {
+            const config = await readConfig();
+            ensureConfigured(config);
+            const snapshot = await readPoolDescriptorSnapshot(config);
+            res.json({
+                ok: true,
+                poolId: snapshot.descriptor.poolId,
+                catalogRepositoryId: snapshot.descriptor.catalogRepositoryId,
+                repositories: toClientConfig(config).repositories,
+                backupLanes: snapshot.descriptor.backupLanes,
+                freshness: { stale: snapshot.stale, error: snapshot.error?.message || null },
+            });
+        }));
+
+        router.post('/pool/members', asyncRoute(async (req, res) => {
+            const result = await withExclusiveOperation('正在加入仓库池', async () => {
+                const config = await readConfig();
+                ensureConfigured(config);
+                return await addPoolMember(config, {
+                    repo: trimToEmpty(req.body?.repo),
+                    token: trimToEmpty(req.body?.token),
+                });
+            });
+            res.json({ ok: true, result });
+        }));
+
+        router.post('/pool/lanes/:laneId/switch', asyncRoute(async (req, res) => {
+            const result = await withExclusiveOperation('正在切换后续备份仓库', async () => {
+                const config = await readConfig();
+                ensureConfigured(config);
+                return await switchPoolLane(config, {
+                    laneId: trimToEmpty(req.params.laneId),
+                    repositoryId: trimToEmpty(req.body?.repositoryId),
+                    expectedSegmentId: trimToEmpty(req.body?.expectedSegmentId),
+                });
+            });
+            res.json({ ok: true, result });
         }));
 
         router.get('/backups', asyncRoute(async (req, res) => {
