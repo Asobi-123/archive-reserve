@@ -11,6 +11,7 @@ const express = require('express');
 const yauzl = require('yauzl');
 const repositoryPool = require('./repository-pool');
 const { aggregateMemberBackupResults, assertBackupRepository } = require('./repository-pool-routing');
+const { assertStagingComplete, collectRequiredDirectories } = require('./repository-pool-restore');
 const {
     MARKER_PATH,
     createRepositoryPoolStore,
@@ -2278,6 +2279,27 @@ async function prepareRestoreTarget(backupRootInfo, mode, selection) {
     }
 }
 
+async function prepareStagingDirectory(stagingDir, selection) {
+    await ensureDirectoryExists(stagingDir);
+    for (const directoryPath of collectRequiredDirectories(selection)) {
+        await ensureDirectoryExists(resolveRootedPath(stagingDir, directoryPath));
+    }
+}
+
+async function commitStagedRestore(stagingDir, backupRootInfo, mode, selection) {
+    await prepareRestoreTarget(backupRootInfo, mode, selection);
+    for (const entry of selection.files) {
+        const sourcePath = resolveRootedPath(stagingDir, entry.path);
+        const targetPath = resolveDataPath(backupRootInfo, entry.path);
+        await ensureDirectoryExists(path.dirname(targetPath));
+        await fsp.copyFile(sourcePath, targetPath);
+        if (entry.mtimeMs > 0) {
+            const restoredTime = new Date(entry.mtimeMs);
+            await fsp.utimes(targetPath, restoredTime, restoredTime);
+        }
+    }
+}
+
 async function openZip(zipPath) {
     return await new Promise((resolve, reject) => {
         yauzl.open(zipPath, { lazyEntries: true, decodeStrings: true }, (error, zipFile) => {
@@ -3321,10 +3343,13 @@ const plugin = {
                     throw buildError('恢复模式无效。');
                 }
 
-                const release = await getRelease(config, releaseId);
-                const meta = await getBackupMeta(config, release);
+                const source = await resolveBackupSourceConfig(config, req.body?.repositoryId);
+                const release = await getRelease(source.config, releaseId);
+                const meta = await getBackupMeta(source.config, release);
+                assertBackupSource(meta, source.repositoryId);
                 assertBackupRootMatchesForRestore(meta, config);
                 const tempDir = await makeTempDir('restore');
+                const stagingDir = path.join(tempDir, 'staging');
 
                 try {
                     const selection = mode === 'full'
@@ -3340,7 +3365,7 @@ const plugin = {
                         throw buildError('至少选择一个要恢复的路径。');
                     }
 
-                    await prepareRestoreTarget(backupRootInfo, mode, selection);
+                    await prepareStagingDirectory(stagingDir, selection);
                     const storeReleaseCache = new Map();
                     let remainingFiles = selection.files.slice();
 
@@ -3356,16 +3381,16 @@ const plugin = {
                         });
                         const storeKey = buildChunkStoreCacheKey(meta, chunk);
                         if (!storeReleaseCache.has(storeKey)) {
-                            storeReleaseCache.set(storeKey, await resolveChunkStoreRelease(config, meta, chunk));
+                            storeReleaseCache.set(storeKey, await resolveChunkStoreRelease(source.config, meta, chunk));
                         }
                         const storeRelease = storeReleaseCache.get(storeKey);
-                        const chunkPath = await materializeChunkArchive(config, storeRelease, chunk, tempDir);
+                        const chunkPath = await materializeChunkArchive(source.config, storeRelease, chunk, tempDir);
                         setOperationState('正在恢复分块', {
                             current: index + 1,
                             total: selection.chunks.length,
                             detail: chunk.rootPath,
                         });
-                        const extractedPaths = await extractSelectedFiles(chunkPath, remainingFiles, backupRootInfo.directory, {
+                        const extractedPaths = await extractSelectedFiles(chunkPath, remainingFiles, stagingDir, {
                             allowMissing: true,
                         });
                         const extractedSet = new Set(extractedPaths);
@@ -3373,9 +3398,13 @@ const plugin = {
                         await fsp.rm(chunkPath, { force: true });
                     }
 
-                    if (remainingFiles.length > 0) {
-                        throw buildError(`压缩包缺少这些文件：${remainingFiles.map((entry) => entry.path).join(', ')}`);
-                    }
+                    assertStagingComplete(remainingFiles);
+                    setOperationState('正在提交恢复内容', {
+                        current: 1,
+                        total: 1,
+                        detail: backupRootInfo.label,
+                    });
+                    await commitStagedRestore(stagingDir, backupRootInfo, mode, selection);
                 } finally {
                     await removeDirectorySafe(tempDir);
                 }

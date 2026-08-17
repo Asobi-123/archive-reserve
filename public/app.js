@@ -1027,7 +1027,7 @@ async function onBackupListClick(event) {
         try {
             await apiRequest(`/backups/${releaseId}/restore`, {
                 method: 'POST',
-                body: { mode: 'full' },
+                body: { mode: 'full', repositoryId },
             });
             setStatus('整包恢复完成，建议重启或刷新酒馆', false);
             showToast('整包恢复完成', 'success');
@@ -1125,6 +1125,7 @@ async function openRestoreModal(releaseId, repositoryId) {
 
 function closeRestoreModal() {
     state.modal.releaseId = null;
+    state.modal.repositoryId = null;
     state.modal.backup = null;
     state.modal.meta = null;
     state.modal.searchQuery = '';
@@ -1402,6 +1403,7 @@ async function onConfirmSelectiveRestore() {
             body: {
                 mode,
                 selectedPaths,
+                repositoryId: state.modal.repositoryId,
             },
         });
         closeRestoreModal();
