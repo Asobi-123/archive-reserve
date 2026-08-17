@@ -3,7 +3,21 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { aggregateMemberBackupResults, assertBackupRepository } = require('../repository-pool-routing.js');
+const { aggregateMemberBackupResults, assertBackupRepository, parseGraphqlReleasePage } = require('../repository-pool-routing.js');
+
+test('parses paginated GraphQL release IDs for REST detail fallback', () => {
+    assert.deepEqual(parseGraphqlReleasePage({
+        data: {
+            repository: {
+                releases: {
+                    nodes: [{ databaseId: 101 }, { databaseId: 102 }],
+                    pageInfo: { hasNextPage: true, endCursor: 'cursor-2' },
+                },
+            },
+        },
+    }), { releaseIds: [101, 102], hasNextPage: true, endCursor: 'cursor-2' });
+    assert.throws(() => parseGraphqlReleasePage({ errors: [{ message: 'denied' }] }), /denied/);
+});
 
 test('aggregates equal release IDs without losing repository identity', () => {
     const result = aggregateMemberBackupResults([

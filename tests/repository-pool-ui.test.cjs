@@ -40,6 +40,7 @@ test('backup actions retain repository identity and partial state', () => {
     assert.match(app, /body: \{ repositoryId \}/);
     assert.match(app, /new URLSearchParams\(\{ repositoryId/);
     assert.match(app, /部分仓库当前不可用/);
+    assert.match(app, /elements\.backupList\.innerHTML = poolNotice \|\|/);
     assert.match(app, /backup\.source\?\.repo/);
 });
 

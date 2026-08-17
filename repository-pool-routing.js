@@ -1,5 +1,24 @@
 'use strict';
 
+function parseGraphqlReleasePage(payload) {
+    if (Array.isArray(payload?.errors) && payload.errors.length) {
+        throw new Error(payload.errors.map((error) => error.message).join('; '));
+    }
+    const connection = payload?.data?.repository?.releases;
+    if (!connection || !Array.isArray(connection.nodes)) {
+        throw new Error('GitHub GraphQL did not return a release connection.');
+    }
+    const releaseIds = connection.nodes.map((release) => Number(release?.databaseId));
+    if (releaseIds.some((releaseId) => !Number.isSafeInteger(releaseId) || releaseId <= 0)) {
+        throw new Error('GitHub GraphQL returned an invalid release ID.');
+    }
+    return {
+        releaseIds,
+        hasNextPage: Boolean(connection.pageInfo?.hasNextPage),
+        endCursor: connection.pageInfo?.endCursor || null,
+    };
+}
+
 function aggregateMemberBackupResults(results, { descriptorStale = false, descriptorError = null, checkedAt = new Date().toISOString() } = {}) {
     const members = results.map(({ backups: ignored, ...member }) => member);
     const backups = results
@@ -31,4 +50,4 @@ function assertBackupRepository(meta, repositoryId) {
     return true;
 }
 
-module.exports = { aggregateMemberBackupResults, assertBackupRepository };
+module.exports = { aggregateMemberBackupResults, assertBackupRepository, parseGraphqlReleasePage };

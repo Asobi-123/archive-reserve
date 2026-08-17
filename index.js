@@ -10,7 +10,7 @@ const archiver = require('archiver');
 const express = require('express');
 const yauzl = require('yauzl');
 const repositoryPool = require('./repository-pool');
-const { aggregateMemberBackupResults, assertBackupRepository } = require('./repository-pool-routing');
+const { aggregateMemberBackupResults, assertBackupRepository, parseGraphqlReleasePage } = require('./repository-pool-routing');
 const { assertStagingComplete, collectRequiredDirectories } = require('./repository-pool-restore');
 const {
     advanceCompleteScan,
@@ -1388,7 +1388,7 @@ async function ensureRepositoryReady(config, { ensurePool = true } = {}) {
     const defaultBranch = repoInfo.default_branch || 'main';
 
     try {
-        await requestGitHub(config, `${repoInfoPath.path}/git/ref/heads/${encodeURIComponent(defaultBranch)}`, {
+        await requestGitHub(config, `${repoInfoPath.path}/contents`, {
             memberContext: verifiedMemberContext,
         });
     } catch (error) {
@@ -1469,7 +1469,13 @@ async function listAllReleases(config) {
     let page = 1;
 
     while (true) {
-        const pageItems = await requestGitHub(config, `${repoPath}/releases?per_page=100&page=${page}`);
+        let pageItems;
+        try {
+            pageItems = await requestGitHub(config, `${repoPath}/releases?per_page=100&page=${page}`);
+        } catch (error) {
+            if (error.statusCode !== 404 || page !== 1) throw error;
+            return await listAllReleasesViaGraphql(config, repoPath);
+        }
         if (!Array.isArray(pageItems) || pageItems.length === 0) {
             break;
         }
@@ -1480,6 +1486,39 @@ async function listAllReleases(config) {
         page += 1;
     }
 
+    return releases;
+}
+
+async function listAllReleasesViaGraphql(config, repoPath) {
+    const { repo, memberContext } = repoApiPath(config);
+    const query = `query ArchiveReserveReleases($owner: String!, $name: String!, $cursor: String) {
+        repository(owner: $owner, name: $name) {
+            releases(first: 100, after: $cursor, orderBy: { field: CREATED_AT, direction: DESC }) {
+                nodes { databaseId }
+                pageInfo { hasNextPage endCursor }
+            }
+        }
+    }`;
+    const releaseIds = [];
+    let cursor = null;
+    do {
+        const payload = await requestGitHub(config, 'https://api.github.com/graphql', {
+            method: 'POST',
+            memberContext,
+            json: { query, variables: { owner: repo.owner, name: repo.repo, cursor } },
+            action: '读取仓库 release 索引',
+        });
+        const parsed = parseGraphqlReleasePage(payload);
+        releaseIds.push(...parsed.releaseIds);
+        cursor = parsed.hasNextPage ? parsed.endCursor : null;
+    } while (cursor);
+
+    const releases = [];
+    for (let index = 0; index < releaseIds.length; index += 6) {
+        releases.push(...await Promise.all(releaseIds.slice(index, index + 6).map((releaseId) => (
+            requestGitHub(config, `${repoPath}/releases/${releaseId}`, { memberContext })
+        ))));
+    }
     return releases;
 }
 

@@ -970,14 +970,14 @@ function renderBackupList() {
     elements.backupSearchMeta.textContent = state.backupSearchQuery
         ? `搜索后显示 ${visibleBackups.length} 个档案。`
         : '';
+    const poolNotice = state.poolReadState?.partial || state.poolReadState?.freshness?.stale
+        ? '<div class="empty-state">部分仓库当前不可用，或仓库池信息已过期；这里只显示本次成功读取的档案。</div>'
+        : '';
     if (!visibleBackups.length) {
-        elements.backupList.innerHTML = '<div class="empty-state">当前筛选下没有备份。</div>';
+        elements.backupList.innerHTML = poolNotice || '<div class="empty-state">当前筛选下没有备份。</div>';
         return;
     }
 
-    const poolNotice = state.poolReadState?.partial || state.poolReadState?.freshness?.stale
-        ? '<div class="empty-state">部分仓库当前不可用，或目录缓存已过期；下方只显示本次成功读取的档案。</div>'
-        : '';
     elements.backupList.innerHTML = poolNotice + visibleBackups.map((backup) => `
         <article class="backup-card">
             <div class="backup-main">
