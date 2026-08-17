@@ -10,6 +10,7 @@ const {
     deriveMemberCapabilities,
     repositoryMember,
     resolveBackupReservation,
+    resolveWriteEligibleMember,
     assertReservationCurrent,
     updateDescriptorWithCas,
 } = require('../repository-pool.js');
@@ -195,6 +196,44 @@ test('member capabilities keep readable history separate from write eligibility'
         mirrorRevision: 4,
         catalogRevision: 4,
     }).readable, false);
+});
+
+test('write eligibility rejects inactive, unconfigured, tokenless, and known-unwritable members', () => {
+    const poolDescriptor = descriptor();
+    const config = {
+        configVersion: 2,
+        poolId: 'pool-a',
+        catalogRepositoryId: 'repo-a',
+        defaultToken: 'token-a',
+        repositories: [{
+            repositoryId: 'repo-a',
+            githubRepositoryId: '1001',
+            repo: 'owner/archive-a',
+            membershipState: 'active',
+        }],
+    };
+    assert.equal(resolveWriteEligibleMember(config, poolDescriptor, 'repo-a').context.token, 'token-a');
+
+    config.repositories[0].lastKnownState = { writeEligible: false };
+    assert.throws(
+        () => resolveWriteEligibleMember(config, poolDescriptor, 'repo-a'),
+        (error) => error.statusCode === 409,
+    );
+    config.repositories[0].lastKnownState = { writeEligible: true };
+    config.defaultToken = '';
+    assert.throws(
+        () => resolveWriteEligibleMember(config, poolDescriptor, 'repo-a'),
+        (error) => error.statusCode === 403,
+    );
+    assert.throws(
+        () => resolveWriteEligibleMember(config, poolDescriptor, 'repo-missing'),
+        (error) => error.statusCode === 409,
+    );
+    poolDescriptor.members[0].membershipState = 'pending';
+    assert.throws(
+        () => resolveWriteEligibleMember(config, poolDescriptor, 'repo-a'),
+        (error) => error.statusCode === 409,
+    );
 });
 
 test('new lane reservations and pre-upload revalidation bind one member', () => {

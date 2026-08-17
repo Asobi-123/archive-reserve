@@ -179,6 +179,23 @@ function resolveMemberContext(config, repositoryId = null) {
     };
 }
 
+function resolveWriteEligibleMember(config, descriptor, repositoryId) {
+    const member = descriptor?.members?.find((candidate) => candidate.repositoryId === repositoryId);
+    if (!member || member.membershipState !== 'active') {
+        throw Object.assign(new Error('Repository is not an active pool member.'), { statusCode: 409 });
+    }
+    const context = resolveMemberContext(config, repositoryId);
+    if (!context.token) {
+        throw Object.assign(new Error('Repository has no usable token.'), { statusCode: 403 });
+    }
+    const pool = config?.__poolConfig || config;
+    const local = pool?.repositories?.find((candidate) => candidate.repositoryId === repositoryId);
+    if (local?.lastKnownState?.writeEligible === false) {
+        throw Object.assign(new Error('Repository is not currently write eligible.'), { statusCode: 409 });
+    }
+    return { member, context };
+}
+
 function bindRuntimeConfigToMember(config, repositoryId) {
     const context = resolveMemberContext(config, repositoryId);
     const bound = { ...config, repo: context.repo, token: context.token };
@@ -608,6 +625,7 @@ module.exports = {
     repositoryMember,
     resolveBackupReservation,
     resolveMemberContext,
+    resolveWriteEligibleMember,
     assertReservationCurrent,
     serializeRuntimeConfig,
     toRuntimeConfig,

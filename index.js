@@ -10,7 +10,10 @@ const archiver = require('archiver');
 const express = require('express');
 const yauzl = require('yauzl');
 const repositoryPool = require('./repository-pool');
-const { createRepositoryPoolStore } = require('./repository-pool-github');
+const {
+    MARKER_PATH,
+    createRepositoryPoolStore,
+} = require('./repository-pool-github');
 
 const info = {
     id: 'archive-reserve',
@@ -2536,7 +2539,14 @@ async function reserveBackupMember(config, catalogState, options = {}) {
     }
 
     if (!resolved.reservation) {
-        const candidates = descriptor.members.filter((member) => member.membershipState === 'active');
+        const candidates = descriptor.members.filter((member) => {
+            try {
+                repositoryPool.resolveWriteEligibleMember(config, descriptor, member.repositoryId);
+                return true;
+            } catch (error) {
+                return false;
+            }
+        });
         const requestedRepositoryId = trimToEmpty(options.repositoryId);
         let selected = requestedRepositoryId
             ? candidates.find((member) => member.repositoryId === requestedRepositoryId)
@@ -2564,11 +2574,37 @@ async function reserveBackupMember(config, catalogState, options = {}) {
     }
 
     const targetConfig = repositoryPool.bindRuntimeConfigToMember(config, resolved.reservation.repositoryId);
+    await assertMemberWriteEligible(config, descriptor, targetConfig.__memberContext);
     const targetState = resolved.reservation.repositoryId === catalogContext.repositoryId
         ? catalogState
         : await ensureRepositoryReady(targetConfig, { ensurePool: false });
     await saveConfig(config);
     return { descriptor, reservation: resolved.reservation, targetConfig, targetState };
+}
+
+async function assertMemberWriteEligible(config, descriptor, memberContext) {
+    const { member } = repositoryPool.resolveWriteEligibleMember(
+        config,
+        descriptor,
+        memberContext.repositoryId,
+    );
+    if (memberContext.repositoryId === descriptor.catalogRepositoryId) return true;
+
+    const store = createPoolStore(config);
+    const [marker, mirror] = await Promise.all([
+        store.readJson(memberContext, MARKER_PATH),
+        store.readDescriptor(memberContext),
+    ]);
+    repositoryPool.validateMemberMarker(marker.value, {
+        poolId: descriptor.poolId,
+        repositoryId: member.repositoryId,
+        githubRepositoryId: member.githubRepositoryId,
+        catalogRepositoryId: descriptor.catalogRepositoryId,
+    });
+    if (!mirror.exists || mirror.value.revision !== descriptor.revision) {
+        throw buildError('备份来源仓库的 pool descriptor 尚未同步，请先修复镜像。', 409);
+    }
+    return true;
 }
 
 async function revalidateBackupReservation(config, reservation) {
