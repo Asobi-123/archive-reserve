@@ -117,6 +117,21 @@ Expected:
 - `replace` clears selected roots first, then rebuilds them from the backup.
 - Restore progress updates while chunks are being processed.
 
+## 7A. Restore Staging Failure Safety
+
+Steps:
+
+1. Put a local marker file in the active backup root.
+2. Start a full, merge, and replace restore while using a test backup whose required chunk asset has been removed or made unreadable.
+3. Repeat with a backup from the second member of a two-repository pool.
+
+Expected:
+
+- The restore fails before the local target is cleared or overwritten.
+- The local marker and all selected target paths remain unchanged.
+- Temporary staging files are removed after the failure.
+- The request reads the release, metadata, and chunks only from the selected `repositoryId`.
+
 ## 8. Download Export
 
 Steps:
