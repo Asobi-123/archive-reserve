@@ -12,10 +12,15 @@ function parseGraphqlReleasePage(payload) {
     if (releaseIds.some((releaseId) => !Number.isSafeInteger(releaseId) || releaseId <= 0)) {
         throw new Error('GitHub GraphQL returned an invalid release ID.');
     }
+    const hasNextPage = Boolean(connection.pageInfo?.hasNextPage);
+    const endCursor = connection.pageInfo?.endCursor || null;
+    if (hasNextPage && !endCursor) {
+        throw new Error('GitHub GraphQL pagination cursor is missing.');
+    }
     return {
         releaseIds,
-        hasNextPage: Boolean(connection.pageInfo?.hasNextPage),
-        endCursor: connection.pageInfo?.endCursor || null,
+        hasNextPage,
+        endCursor,
     };
 }
 

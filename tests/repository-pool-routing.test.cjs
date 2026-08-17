@@ -17,6 +17,16 @@ test('parses paginated GraphQL release IDs for REST detail fallback', () => {
         },
     }), { releaseIds: [101, 102], hasNextPage: true, endCursor: 'cursor-2' });
     assert.throws(() => parseGraphqlReleasePage({ errors: [{ message: 'denied' }] }), /denied/);
+    assert.throws(() => parseGraphqlReleasePage({
+        data: {
+            repository: {
+                releases: {
+                    nodes: [{ databaseId: 101 }],
+                    pageInfo: { hasNextPage: true, endCursor: null },
+                },
+            },
+        },
+    }), /cursor/);
 });
 
 test('aggregates equal release IDs without losing repository identity', () => {
