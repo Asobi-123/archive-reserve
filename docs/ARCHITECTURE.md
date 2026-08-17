@@ -47,10 +47,12 @@ The real payload lives in reusable hidden chunk assets referenced by that metada
 ### 3. Archive library and backup download
 
 1. The UI reads `/backups`.
-2. The server scans all releases in the configured repository.
-3. Only releases with the Archive Reserve summary body plus `meta.json` are treated as valid backups.
-4. The UI groups and filters those backups by name, note, device, and displayed backup root.
-5. When the user clicks download, the plugin reconstructs a complete zip from hidden chunks, streams it to the browser, then removes temporary files.
+2. The server reads the catalog descriptor, verifies each active member's immutable GitHub id and pool marker, and scans readable members independently.
+3. A failed member is returned as a partial-result error; it is never represented as an empty repository. A cached descriptor is identified as stale when the live catalog cannot be read.
+4. Only releases with the Archive Reserve summary body plus `meta.json` are treated as valid backups. Every result is keyed by `repositoryId + releaseId`, so equal GitHub release ids in different members remain distinct.
+5. The UI groups and filters those backups by name, note, device, and displayed backup root.
+6. Tree, health-check, and download requests resolve the requested `repositoryId` against the current pool before accessing a release. A multi-member pool rejects an omitted member id; a single-member pool may infer it for compatibility.
+7. When the user clicks download, the plugin reconstructs a complete zip from chunks in that same source repository, streams it to the browser, then removes temporary files.
 
 ### 4. Full restore and selective restore
 
@@ -162,6 +164,12 @@ This keeps the UX simple while still reducing repeat upload cost.
 
 Each visible backup release is lightweight.
 The heavy payload lives in the hidden chunk-store release and is referenced by `meta.json`.
+
+### Catalog authority and member-scoped reads
+
+The catalog descriptor is the authority for pool membership and backup lane segments. Local descriptor cache data can keep read-only discovery available during a catalog outage, but responses carry stale/partial state and cached data never authorizes writes or destructive maintenance.
+
+Every backup-specific read is bound to one member context before the release id is resolved. This prevents a release id collision in another repository from selecting the wrong metadata or chunk-store assets.
 
 ### Selected-path restore downloads only matching chunks
 
