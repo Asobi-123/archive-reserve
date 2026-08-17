@@ -30,7 +30,8 @@ git clone https://github.com/Asobi-123/archive-reserve.git
 
 - backs up the active SillyTavern user data directory
 - uses GitHub Releases as the remote archive library
-- lists backups by device
+- combines multiple GitHub repositories into one archive library and lists all backups by device
+- lets multiple devices share the same repository pool
 - supports full restore
 - supports selective restore by folder or file
 - supports `merge` and `replace` restore modes
@@ -374,16 +375,21 @@ Official GitHub documentation:
 http://127.0.0.1:8000/api/plugins/archive-reserve/ui
 ```
 
-2. Fill:
-   - repository
-   - token
-   - device name
-3. Save settings.
-4. Go to `创建备份`.
-5. Create the first full backup.
+2. In `仓库设置`, click `添加仓库`.
+3. Paste a full GitHub repository URL or enter `owner/repo`, then provide a token that can access it.
+4. Set the device name and backup user directory, then save settings.
+5. Go to `创建备份`, confirm the first write repository, and create the full backup.
 
-The first upload is usually the slowest one.
-Later backups can reuse unchanged hidden chunks.
+A repository uploads more data the first time it stores a backup because it must establish its own hidden chunks.
+Switching back to a repository used before continues reusing its existing chunks.
+
+### Add and switch repositories
+
+- Use `添加仓库` in `仓库设置` to expand the pool.
+- A new member can reuse the first repository token. Enter a separate token only when its permissions differ.
+- The pool does not load-balance automatically. One backup always remains complete inside one repository.
+- `当前写入仓库` controls where this device creates later backups. Switching does not move historical archives.
+- The library, restore, download, health check, and maintenance views read every available pool member.
 
 ## Daily Usage
 
@@ -405,9 +411,11 @@ Open `档案库`, choose a backup, open path restore, tick the folders or files 
 ### Cross-device restore
 
 1. Device A uploads a backup.
-2. Device B points to the same repository.
-3. Device B opens `档案库`.
-4. Device B restores Device A's backup.
+2. Device B adds any existing pool member and provides a token that can access the relevant repositories.
+3. After Archive Reserve recognizes the same pool, Device B opens `档案库`.
+4. Device B restores Device A's backup from any member repository.
+
+The same repository can be used by multiple Archive Reserve devices.
 
 ### Download backup
 
@@ -426,9 +434,11 @@ In `仓库设置`, you can enable automatic backup and configure:
 
 The `维护` page includes:
 
-- `刷新空间`
+- `刷新空间`, with physical usage per repository and logical archive data per device
 - `立即回收`
 - per-backup `检查`
+
+Device data is the sum of the original data recorded by its backups. Because backups can reuse chunks, this is not additional GitHub storage usage; use the repository breakdown for physical usage.
 
 ## FAQ
 

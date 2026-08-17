@@ -7,6 +7,20 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-17
+
+### Added
+
+- Multiple GitHub repositories can now form one archive pool, with backups from every repository shown together in the archive library.
+- Each backup root can use a selected write repository and switch repositories without moving its existing backup history. Switching back to a previously used repository continues to reuse its existing chunks.
+- The same repository pool can be used by multiple devices, with each device's backups remaining available from the shared archive library.
+- Maintenance space statistics now show physical usage per repository and logical archive data per device.
+
+### Changed
+
+- Repository setup accepts full GitHub URLs, does not display saved tokens, and reuses the first repository token unless a member needs its own token.
+- Restore now completes and validates staging before modifying the local target for full, merge, and replace operations.
+
 ## [0.2.0] - 2026-06-20
 
 ### Added

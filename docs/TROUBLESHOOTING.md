@@ -59,13 +59,14 @@ This applies to:
 - health check
 - manual GC
 
-## GitHub Timeout Or Socket Errors
+## GitHub Timeout, HTTP, Or Socket Errors
 
 Common examples:
 
 - `UND_ERR_CONNECT_TIMEOUT`
 - `UND_ERR_HEADERS_TIMEOUT`
 - `UND_ERR_SOCKET`
+- HTTP `408`, `429`, `500`, `502`, `503`, or `504`
 
 What to check:
 
@@ -73,16 +74,37 @@ What to check:
 - GitHub is not being blocked by the current environment
 - the repository and token are valid
 
-Archive Reserve already retries lightweight read requests, but unstable networks can still fail large or repeated operations.
+Archive Reserve retries lightweight read-only GitHub requests, including transient HTTP failures. Uploads and other writes are not automatically redirected to another repository, so unstable networks can still fail large or repeated operations.
 
-## The Backup Library Is Empty After Restart
+## The Backup Library Is Empty Or Missing One Repository
 
 Check these points:
 
-- repository and token were actually saved
+- each expected repository is still listed in repository settings
 - `data/.archive-reserve/config.json` exists
-- the saved repository is the same one that contains your backup releases
-- GitHub token still has access to that repository
+- the catalog repository is reachable
+- the saved default token or that member's own token still has access to the repository
+
+The archive library combines backups from every readable pool member. If one member is temporarily unavailable, backups from other members remain visible and the page reports a partial result. It does not mean that the unavailable repository is empty or that its backups were deleted.
+
+After repository access returns, refresh the archive library. The member's backups should reappear without changing the current write repository.
+
+## A Repository Needs A Different Token
+
+The first repository token is reused by default. A member can instead store its own local token:
+
+1. open repository settings
+2. use the credential action for the affected repository
+3. enter a token that can access that repository
+4. save and retry the failed read or write
+
+Changing one member's token does not change other members. Tokens stay in the local server config and are not written to the remote pool descriptor.
+
+## Switching The Write Repository Fails
+
+A switch can update the authoritative pool mapping before the target repository's descriptor mirror is ready. When this happens, Archive Reserve reports that the target is not ready instead of pretending the old repository is still selected.
+
+Confirm that the target repository and its token are writable, then retry the switch. Do not create a second pool or re-add repositories to work around the error.
 
 ## Backup Feels Slow
 
@@ -93,6 +115,8 @@ Things to know:
 - very large `user/images/*` or `user/files/*` trees still take time if they changed heavily
 
 If every backup is always as slow as the first one, check whether the same repository is being reused and whether the old hidden chunk-store release still exists.
+
+The first backup after switching to a repository that has never stored this backup lane must establish reusable chunks there. Switching back to a repository used earlier reuses that repository's existing chunks; it does not initialize a new chunk store or reuse chunks from another repository.
 
 ## Restore Feels Slow
 

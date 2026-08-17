@@ -10,8 +10,26 @@ Shape:
 
 ```json
 {
-  "repo": "owner/repo",
-  "token": "github-token",
+  "configVersion": 2,
+  "poolId": "pool-random-id",
+  "catalogRepositoryId": "repo-random-id",
+  "defaultToken": "github-token",
+  "repositories": [
+    {
+      "repositoryId": "repo-random-id",
+      "githubRepositoryId": "123456789",
+      "repo": "owner/archive-a",
+      "tokenOverride": "",
+      "addedAt": "2026-08-17T00:00:00.000Z",
+      "lastKnownState": {
+        "readable": true,
+        "writeEligible": true,
+        "catalogSynced": true,
+        "lastValidatedAt": "2026-08-17T00:00:00.000Z"
+      }
+    }
+  ],
+  "descriptorCache": null,
   "backupRoot": "default-user",
   "deviceId": "b7d4c1d74b834a5b8fa1c1ce49a5b8f2",
   "deviceName": "MacBook Air",
@@ -25,8 +43,11 @@ Shape:
 
 Notes:
 
-- `repo` is normalized to `owner/repo`
-- `token` is stored server-side only
+- `catalogRepositoryId` identifies the member that stores the authoritative pool descriptor
+- each member `repo` is normalized to `owner/repo`
+- `defaultToken` and optional `tokenOverride` values are stored server-side only
+- `lastKnownState` is cached display evidence; live validation and a fresh catalog are still required before writes or destructive maintenance
+- config v1 is migrated atomically; its repository becomes the catalog and first pool member
 - `backupRoot` is a top-level user directory under `data`; empty string means the whole `data` directory
 - `manualBackupKeepCount: 0` means unlimited
 
@@ -124,7 +145,7 @@ Shape:
   "createdAt": "2026-04-10T10:25:12.000Z",
   "plugin": {
     "id": "archive-reserve",
-    "version": "0.1.0"
+    "version": "0.3.0"
   },
   "device": {
     "id": "b7d4c1d74b834a5b8fa1c1ce49a5b8f2",
@@ -216,15 +237,14 @@ Shape:
 
 If a chunk exceeds the split threshold, `parts` contains multiple sequential `.partNNN` assets.
 
-## Hidden Chunk Store Release
+## Hidden Chunk Store Releases
 
-The hidden reusable chunk release uses:
+The original hidden reusable chunk release uses:
 
 - tag: `archivereserve-store-v1`
 - name: `Archive Reserve Chunk Store`
 
-It is not a user-visible backup.
-It is the backing object store for all current backups in the repository.
+Additional shards use tags such as `archivereserve-store-v2-0001` when an existing store approaches its asset limit. These releases are not user-visible backups. Together they are the backing object store for backups in that repository.
 
 ## Restore Modes
 
@@ -259,6 +279,7 @@ Shape:
   "chunkStore": {
     "exists": true,
     "releaseId": 123456789,
+    "releaseCount": 2,
     "total": {
       "count": 74,
       "bytes": 1803550720
@@ -276,7 +297,52 @@ Shape:
       "bytes": 20971520
     }
   },
+  "repositories": [
+    {
+      "repositoryId": "repo-a",
+      "repo": "owner/archive-a",
+      "complete": true,
+      "error": null,
+      "backups": {
+        "totalCount": 6,
+        "manualCount": 4,
+        "automaticCount": 2,
+        "metaBytes": 35200
+      },
+      "chunkStore": {
+        "releaseCount": 1,
+        "total": { "count": 52, "bytes": 1258291200 },
+        "referenced": { "count": 49, "bytes": 1237319680 },
+        "reclaimable": { "count": 1, "bytes": 10485760 }
+      },
+      "totalBytes": 1258326400
+    }
+  ],
+  "devices": [
+    {
+      "deviceId": "b7d4c1d74b834a5b8fa1c1ce49a5b8f2",
+      "deviceName": "MacBook Air",
+      "totalCount": 5,
+      "manualCount": 3,
+      "automaticCount": 2,
+      "logicalBytes": 3670016000,
+      "repositoryCount": 2
+    }
+  ],
   "gcGraceHours": 6,
+  "complete": true,
+  "members": [
+    {
+      "repositoryId": "repo-a",
+      "repo": "owner/archive-a",
+      "complete": true,
+      "error": null
+    }
+  ],
+  "freshness": {
+    "stale": false,
+    "error": null
+  },
   "checkedAt": "2026-04-10T10:35:12.000Z"
 }
 ```
@@ -304,9 +370,9 @@ Shape:
 }
 ```
 
-## Repository Pool v1 Contract (Target 0.3.0)
+## Repository Pool v1 Contract (Implemented In 0.3.0)
 
-This section freezes the repository-pool contract before implementation. It describes the target 0.3.0 model; the current 0.2.0 runtime remains single-repository until the corresponding issues are complete.
+This section describes the repository-pool contract implemented by the 0.3.0 runtime.
 
 ### Authority And Persistence
 
@@ -348,6 +414,8 @@ Local config v2 keeps credentials local:
   }
 }
 ```
+
+`lastKnownState` and `descriptorCache` may support status display and explicitly marked stale reads. They never permanently authorize writes, repository switching, backup deletion, retention, or garbage collection; those operations require current remote validation.
 
 ### Remote Files And Identity
 

@@ -7,23 +7,24 @@ This checklist is for release validation before publishing a new Archive Reserve
 - SillyTavern starts without server-plugin load errors.
 - `plugins/archive-reserve` exists in the target SillyTavern root.
 - `config.yaml` has `enableServerPlugins: true`.
-- A GitHub test repository and usable token are ready.
+- Two GitHub test repositories and usable tokens are ready.
 - Test at least one desktop viewport and one mobile/narrow viewport.
 
-## 1. Config Save And Reload
+## 1. First Repository And Config Reload
 
 Steps:
 
 1. Open `/api/plugins/archive-reserve/ui`.
-2. Fill repository, token, device name, and backup user directory.
-3. Save settings.
-4. Restart SillyTavern.
-5. Open the page again.
+2. Click `添加仓库`, paste a full GitHub repository URL, enter its token, and confirm.
+3. Confirm that this first usable repository becomes the current write repository.
+4. Set the device name, backup user directory, and auto-backup options.
+5. Save settings and restart SillyTavern.
+6. Open the page again.
 
 Expected:
 
-- Repository remains filled.
-- Token is not shown in full, but saved-state hint is visible.
+- The repository remains in the repository list and is still the current write repository.
+- The saved token is not shown in full.
 - Device name persists.
 - Backup user directory persists.
 - Auto-backup settings persist.
@@ -86,6 +87,42 @@ Expected:
 - The second backup succeeds.
 - It should not behave like a full first-time upload again.
 - The backup metadata still reconstructs into a complete archive.
+
+## 5A. Repository Pool And Cross-Device Use
+
+Steps:
+
+1. Add a second repository by pasting its full GitHub URL and leave its token empty to reuse the saved default token.
+2. When the repositories require different credentials, update only the second repository with its own token and retry.
+3. Switch the current backup root's write repository to the second member.
+4. Confirm that both `仓库设置` and `创建备份` show the second member as the current write repository.
+5. Create a backup, switch back to the first repository, and create another backup with mostly unchanged data.
+6. Refresh `档案库` and confirm that backups from both repositories are present.
+7. Configure another Archive Reserve device with the same catalog repository and token, then open its archive library.
+
+Expected:
+
+- Adding a member does not move or copy existing backups.
+- The selected write repository is consistent across settings and backup creation.
+- Each completed backup and all of its chunks remain in one source repository.
+- Returning to a previously used repository reuses its existing chunks instead of initializing a new store.
+- Both devices adopt the same pool and can see backups from every readable member.
+- A member with its own token uses that local override without exposing the token in UI responses or remote pool files.
+
+## 5B. Partial Repository Read
+
+Steps:
+
+1. Temporarily remove access to one non-catalog member or simulate transient GitHub `408`, `429`, or `5xx` responses.
+2. Refresh the archive library.
+3. Restore access and refresh again.
+
+Expected:
+
+- Read-only requests retry transient failures before reporting the member unavailable.
+- Backups from readable members remain visible.
+- The failed member is shown as partial/unavailable rather than as an empty repository.
+- After access returns, its backups reappear without changing the current write repository.
 
 ## 6. Full Restore
 
@@ -168,12 +205,15 @@ Steps:
 Expected:
 
 - Space stats render correctly.
+- Physical usage is broken down by repository.
+- Logical archive data and backup counts are broken down by device.
 - Refresh gives visible feedback.
 - GC returns a result even when nothing is reclaimable.
 - Reclaimable space decreases after orphan chunks are deleted.
 - If any pool member or metadata asset is unavailable, the scan is marked incomplete and no chunk is deleted.
 - A new orphan remains protected after the first complete scan and becomes eligible only after a second complete scan at least six hours later.
 - Deleting a backup does not immediately run GC or touch another member's same-named assets.
+- An incomplete or stale scan disables GC instead of advancing orphan evidence.
 
 ## 11. Auto Backup
 
@@ -202,6 +242,7 @@ Expected:
 
 - Search and device filter narrow the archive list correctly.
 - Long lists remain scrollable.
+- Repository rows and the current write repository remain readable without duplicated repository panels.
 - The restore drawer remains usable on mobile.
 - Progress UI does not block critical actions.
 
@@ -209,7 +250,8 @@ Expected:
 
 Before tagging a release:
 
-- `package.json` version matches the intended release version.
+- `package.json`, `package-lock.json`, and the plugin info endpoint report `0.3.0`.
 - `README.md` and `README_EN.md` describe the current install path and UI entry correctly.
 - `CHANGELOG.md` includes the release entry and date.
-- The archive library, backup user directory selection, restore flow, download flow, health check, space stats, and auto backup have all been tested at least once.
+- The first-repository flow, two-repository switching, cross-device adoption, combined archive library, restore flow, download flow, maintenance breakdown, incomplete-scan GC block, and auto backup have all been tested at least once.
+- Automated tests, production JavaScript syntax checks, package dry-run, and `git diff --check` pass before the release is tagged.

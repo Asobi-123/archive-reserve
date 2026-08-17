@@ -33,7 +33,7 @@ const info = {
     id: 'archive-reserve',
     name: 'Archive Reserve',
     description: '完整打包 SillyTavern data，并存入 GitHub Releases，支持整包或按路径恢复。',
-    version: '0.2.0',
+    version: '0.3.0',
 };
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
