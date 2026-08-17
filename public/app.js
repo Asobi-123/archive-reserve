@@ -379,6 +379,7 @@ function renderSpaceStats() {
     }
 
     elements.spaceStats.innerHTML = `
+        ${stats.complete ? '' : '<div class="empty-state">本次扫描不完整，统计仅供参考；已禁止依据本次结果回收分块。</div>'}
         <div class="space-grid">
             <article class="space-card">
                 <h3>档案总览</h3>
