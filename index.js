@@ -2865,6 +2865,7 @@ async function getSpaceStats(config) {
     const memberResults = await Promise.all(activeMembers.map(async (member) => {
         try {
             const bound = repositoryPool.bindRuntimeConfigToMember(config, member.repositoryId);
+            await inspectReadableMember(config, snapshot.descriptor, member);
             return { ok: true, ...(await scanMemberMaintenance(bound)) };
         } catch (error) {
             return { ok: false, repositoryId: member.repositoryId, repo: member.repo, error: error.message };
@@ -3020,6 +3021,7 @@ async function runPoolGarbageCollection(config) {
     const activeMembers = snapshot.descriptor.members.filter((member) => member.membershipState === 'active');
     const scans = await Promise.all(activeMembers.map(async (member) => {
         const bound = repositoryPool.bindRuntimeConfigToMember(config, member.repositoryId);
+        await inspectReadableMember(config, snapshot.descriptor, member);
         return await scanMemberMaintenance(bound);
     }));
     let ledger = await readOrphanLedger();
