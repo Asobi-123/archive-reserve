@@ -196,6 +196,34 @@ function resolveWriteEligibleMember(config, descriptor, repositoryId) {
     return { member, context };
 }
 
+function resolveReadableMember(config, descriptor, repositoryId = '') {
+    const members = (descriptor?.members || []).filter((member) => member.membershipState === 'active');
+    const requestedId = trim(repositoryId);
+    if (!requestedId && members.length !== 1) {
+        throw Object.assign(new Error('repositoryId is required for a multi-member pool.'), { statusCode: 400 });
+    }
+    const targetId = requestedId || members[0]?.repositoryId;
+    const member = members.find((candidate) => candidate.repositoryId === targetId);
+    if (!member) {
+        throw Object.assign(new Error('Repository is not an active pool member.'), { statusCode: 404 });
+    }
+    let context;
+    try {
+        context = resolveMemberContext(config, targetId);
+    } catch (error) {
+        throw Object.assign(new Error('Repository member is not configured locally.'), { statusCode: 409 });
+    }
+    if (!context.token) {
+        throw Object.assign(new Error('Repository has no usable token.'), { statusCode: 403 });
+    }
+    const pool = config?.__poolConfig || config;
+    const local = pool?.repositories?.find((candidate) => candidate.repositoryId === targetId);
+    if (local?.lastKnownState?.readable === false) {
+        throw Object.assign(new Error('Repository is not currently readable.'), { statusCode: 409 });
+    }
+    return { member, context };
+}
+
 function bindRuntimeConfigToMember(config, repositoryId) {
     const context = resolveMemberContext(config, repositoryId);
     const bound = { ...config, repo: context.repo, token: context.token };
@@ -625,6 +653,7 @@ module.exports = {
     repositoryMember,
     resolveBackupReservation,
     resolveMemberContext,
+    resolveReadableMember,
     resolveWriteEligibleMember,
     assertReservationCurrent,
     serializeRuntimeConfig,

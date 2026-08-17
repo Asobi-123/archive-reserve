@@ -10,6 +10,7 @@ const {
     deriveMemberCapabilities,
     repositoryMember,
     resolveBackupReservation,
+    resolveReadableMember,
     resolveWriteEligibleMember,
     assertReservationCurrent,
     updateDescriptorWithCas,
@@ -232,6 +233,33 @@ test('write eligibility rejects inactive, unconfigured, tokenless, and known-unw
     poolDescriptor.members[0].membershipState = 'pending';
     assert.throws(
         () => resolveWriteEligibleMember(config, poolDescriptor, 'repo-a'),
+        (error) => error.statusCode === 409,
+    );
+});
+
+test('read routing requires an exact member in multi-member pools', () => {
+    const poolDescriptor = descriptor();
+    poolDescriptor.members.push(repositoryMember({
+        repositoryId: 'repo-b',
+        githubRepositoryId: '1002',
+        repo: 'owner/archive-b',
+    }));
+    const config = {
+        configVersion: 2,
+        poolId: 'pool-a',
+        catalogRepositoryId: 'repo-a',
+        defaultToken: 'token',
+        repositories: poolDescriptor.members,
+    };
+    assert.throws(() => resolveReadableMember(config, poolDescriptor), (error) => error.statusCode === 400);
+    assert.equal(resolveReadableMember(config, poolDescriptor, 'repo-b').context.repo, 'owner/archive-b');
+    assert.throws(
+        () => resolveReadableMember(config, poolDescriptor, 'repo-unknown'),
+        (error) => error.statusCode === 404,
+    );
+    config.repositories[1].lastKnownState = { readable: false };
+    assert.throws(
+        () => resolveReadableMember(config, poolDescriptor, 'repo-b'),
         (error) => error.statusCode === 409,
     );
 });
