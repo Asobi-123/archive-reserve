@@ -199,7 +199,7 @@ test('member capabilities keep readable history separate from write eligibility'
     }).readable, false);
 });
 
-test('write eligibility rejects inactive, unconfigured, tokenless, and known-unwritable members', () => {
+test('write eligibility rejects inactive, unconfigured, and tokenless members without trusting cached health', () => {
     const poolDescriptor = descriptor();
     const config = {
         configVersion: 2,
@@ -216,10 +216,7 @@ test('write eligibility rejects inactive, unconfigured, tokenless, and known-unw
     assert.equal(resolveWriteEligibleMember(config, poolDescriptor, 'repo-a').context.token, 'token-a');
 
     config.repositories[0].lastKnownState = { writeEligible: false };
-    assert.throws(
-        () => resolveWriteEligibleMember(config, poolDescriptor, 'repo-a'),
-        (error) => error.statusCode === 409,
-    );
+    assert.equal(resolveWriteEligibleMember(config, poolDescriptor, 'repo-a').context.repo, 'owner/archive-a');
     config.repositories[0].lastKnownState = { writeEligible: true };
     config.defaultToken = '';
     assert.throws(
@@ -258,10 +255,7 @@ test('read routing requires an exact member in multi-member pools', () => {
         (error) => error.statusCode === 404,
     );
     config.repositories[1].lastKnownState = { readable: false };
-    assert.throws(
-        () => resolveReadableMember(config, poolDescriptor, 'repo-b'),
-        (error) => error.statusCode === 409,
-    );
+    assert.equal(resolveReadableMember(config, poolDescriptor, 'repo-b').context.repo, 'owner/archive-b');
 });
 
 test('new lane reservations and pre-upload revalidation bind one member', () => {

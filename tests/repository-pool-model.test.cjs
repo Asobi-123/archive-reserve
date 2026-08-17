@@ -17,6 +17,7 @@ const {
     normalizeV2Config,
     serializeRuntimeConfig,
     toRuntimeConfig,
+    updateRuntimeMemberCredential,
     writeJsonAtomically,
 } = require('../repository-pool.js');
 
@@ -72,6 +73,29 @@ test('normalizes only a valid v2 config and rejects catalog drift', () => {
     }), /Catalog repository/);
 });
 
+test('preserves validated member state across config normalization', () => {
+    const lastKnownState = {
+        readable: false,
+        catalogSynced: false,
+        writeEligible: false,
+        lastValidatedAt: '2026-08-17T00:00:00.000Z',
+    };
+    const config = normalizeV2Config({
+        configVersion: 2,
+        poolId: 'pool-a',
+        catalogRepositoryId: 'repo-a',
+        defaultToken: 'secret',
+        repositories: [{
+            repositoryId: 'repo-a',
+            githubRepositoryId: '1001',
+            repo: 'owner/archive-a',
+            lastKnownState,
+        }],
+    });
+    assert.deepEqual(config.repositories[0].lastKnownState, lastKnownState);
+    assert.notEqual(config.repositories[0].lastKnownState, lastKnownState);
+});
+
 test('projects v2 config to legacy runtime fields without persisting legacy token fields', () => {
     const persisted = buildV2ConfigFromLegacy({
         repo: 'owner/archive-a',
@@ -88,6 +112,32 @@ test('projects v2 config to legacy runtime fields without persisting legacy toke
     assert.equal(next.repositories[0].repo, 'owner/archive-renamed');
     assert.equal(Object.prototype.hasOwnProperty.call(next, 'repo'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(next, 'token'), false);
+});
+
+test('persists updated catalog and member credentials without stale overrides', () => {
+    const persisted = buildV2ConfigFromLegacy({ repo: 'owner/archive-a', token: 'old-default' }, {
+        idFactory: idFactory(),
+        githubRepositoryId: '1001',
+    });
+    const catalogId = persisted.catalogRepositoryId;
+    persisted.repositories[0].tokenOverride = 'old-override';
+    persisted.repositories[0].lastKnownState = { readable: false };
+    persisted.repositories.push({
+        repositoryId: 'repo-b',
+        githubRepositoryId: '1002',
+        repo: 'owner/archive-b',
+        membershipState: 'active',
+    });
+    const runtime = toRuntimeConfig(persisted);
+
+    updateRuntimeMemberCredential(runtime, catalogId, 'new-default');
+    updateRuntimeMemberCredential(runtime, 'repo-b', 'repo-b-token');
+    const saved = serializeRuntimeConfig(runtime);
+
+    assert.equal(saved.defaultToken, 'new-default');
+    assert.equal(saved.repositories[0].tokenOverride, undefined);
+    assert.equal(saved.repositories[0].lastKnownState, undefined);
+    assert.equal(saved.repositories[1].tokenOverride, 'repo-b-token');
 });
 
 test('adopts every remote member while preserving local token overrides', () => {

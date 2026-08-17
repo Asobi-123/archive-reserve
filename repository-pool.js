@@ -58,7 +58,15 @@ function idWithPrefix(prefix, idFactory) {
     return `${prefix}-${idFactory()}`;
 }
 
-function repositoryMember({ repositoryId, githubRepositoryId, repo, tokenOverride = '', addedAt, membershipState = 'active' }) {
+function repositoryMember({ repositoryId, githubRepositoryId, repo, tokenOverride = '', addedAt, membershipState = 'active', lastKnownState = null }) {
+    const normalizedState = lastKnownState && typeof lastKnownState === 'object' && !Array.isArray(lastKnownState)
+        ? {
+            readable: Boolean(lastKnownState.readable),
+            catalogSynced: Boolean(lastKnownState.catalogSynced),
+            writeEligible: Boolean(lastKnownState.writeEligible),
+            lastValidatedAt: trim(lastKnownState.lastValidatedAt) || null,
+        }
+        : null;
     return {
         repositoryId: trim(repositoryId),
         githubRepositoryId: String(githubRepositoryId || ''),
@@ -66,6 +74,7 @@ function repositoryMember({ repositoryId, githubRepositoryId, repo, tokenOverrid
         membershipState,
         addedAt: addedAt || new Date().toISOString(),
         ...(tokenOverride ? { tokenOverride } : {}),
+        ...(normalizedState ? { lastKnownState: normalizedState } : {}),
     };
 }
 
@@ -183,6 +192,23 @@ function serializeRuntimeConfig(runtime) {
     return normalizeV2Config(pool);
 }
 
+function updateRuntimeMemberCredential(runtime, repositoryId, token) {
+    const pool = runtime?.__poolConfig;
+    const normalizedToken = trim(token);
+    if (!pool || !normalizedToken) throw new TypeError('A v2 runtime config and token are required.');
+    const member = pool.repositories.find((candidate) => candidate.repositoryId === trim(repositoryId));
+    if (!member) throw new Error(`Unknown repository member: ${repositoryId}`);
+    if (member.repositoryId === pool.catalogRepositoryId) {
+        pool.defaultToken = normalizedToken;
+        runtime.token = normalizedToken;
+        delete member.tokenOverride;
+    } else {
+        member.tokenOverride = normalizedToken;
+    }
+    delete member.lastKnownState;
+    return member;
+}
+
 function resolveMemberContext(config, repositoryId = null) {
     const pool = config?.__poolConfig || config;
     if (!pool || Number(pool.configVersion) !== 2) {
@@ -215,11 +241,6 @@ function resolveWriteEligibleMember(config, descriptor, repositoryId) {
     if (!context.token) {
         throw Object.assign(new Error('Repository has no usable token.'), { statusCode: 403 });
     }
-    const pool = config?.__poolConfig || config;
-    const local = pool?.repositories?.find((candidate) => candidate.repositoryId === repositoryId);
-    if (local?.lastKnownState?.writeEligible === false) {
-        throw Object.assign(new Error('Repository is not currently write eligible.'), { statusCode: 409 });
-    }
     return { member, context };
 }
 
@@ -242,11 +263,6 @@ function resolveReadableMember(config, descriptor, repositoryId = '') {
     }
     if (!context.token) {
         throw Object.assign(new Error('Repository has no usable token.'), { statusCode: 403 });
-    }
-    const pool = config?.__poolConfig || config;
-    const local = pool?.repositories?.find((candidate) => candidate.repositoryId === targetId);
-    if (local?.lastKnownState?.readable === false) {
-        throw Object.assign(new Error('Repository is not currently readable.'), { statusCode: 409 });
     }
     return { member, context };
 }
@@ -688,6 +704,7 @@ module.exports = {
     assertReservationCurrent,
     serializeRuntimeConfig,
     toRuntimeConfig,
+    updateRuntimeMemberCredential,
     verifyGitHubRepositoryIdentity,
     buildMemberMarker,
     applyDescriptorOperation,
