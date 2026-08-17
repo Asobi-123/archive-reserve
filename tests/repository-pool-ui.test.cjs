@@ -12,9 +12,12 @@ const app = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
 test('pool UI exposes member admission and explicit backup placement', () => {
     assert.match(html, /id="pool-member-repo-input"/);
     assert.match(html, /id="pool-member-token-input"/);
+    assert.match(html, /留空则沿用上方已保存的 token/);
     assert.match(html, /id="backup-repository-input"/);
     assert.match(app, /apiRequest\('\/pool\/members'/);
     assert.match(app, /repositoryId: elements\.backupRepositoryInput\.value/);
+    assert.match(app, /normalizeRepositoryInput/);
+    assert.match(app, /repoInput\.readOnly = state\.configured/);
 });
 
 test('backup actions retain repository identity and partial state', () => {
@@ -26,7 +29,7 @@ test('backup actions retain repository identity and partial state', () => {
 });
 
 test('segment switch requires the expected active segment', () => {
-    assert.match(app, /switch-pool-member/);
-    assert.match(app, /expectedSegmentId: button\.dataset\.segmentId/);
+    assert.match(html, /id="active-pool-repository-input"/);
+    assert.match(app, /expectedSegmentId: select\.dataset\.segmentId/);
     assert.match(app, /切换只影响之后创建的完整备份/);
 });

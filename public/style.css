@@ -119,6 +119,10 @@
     box-sizing: border-box;
 }
 
+.hidden {
+    display: none !important;
+}
+
 html,
 body {
     margin: 0;
@@ -1420,24 +1424,87 @@ select:focus {
 }
 .pool-member-list {
     display: grid;
-    gap: 8px;
+    border-top: 1px solid var(--line);
 }
 
-.pool-member-row,
-.pool-member-add-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto auto;
-    gap: 8px;
+.pool-members-heading {
+    display: flex;
     align-items: center;
+    justify-content: space-between;
+    gap: 12px;
 }
 
-.pool-member-add-row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+.pool-member-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+}
+
+.pool-member-main {
+    min-width: 0;
+    display: grid;
+    gap: 5px;
+}
+
+.pool-member-main strong {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pool-member-main > span {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.pool-member-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 22px;
+    padding: 2px 7px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--muted);
+    font-size: 0.76rem;
+}
+
+.pool-member-badge.is-current {
+    border-color: var(--accent);
+    color: var(--accent-deep);
+    background: var(--accent-soft);
+}
+
+.pool-member-status,
+.pool-member-token-state {
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+
+.pool-member-editor {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--secondary-soft);
+}
+
+.pool-member-editor-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
 }
 
 @media (max-width: 720px) {
-    .pool-member-row,
-    .pool-member-add-row {
+    .pool-member-row {
         grid-template-columns: 1fr;
+    }
+
+    .pool-members-heading {
+        align-items: flex-start;
     }
 }
