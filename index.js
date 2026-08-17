@@ -1245,7 +1245,7 @@ async function requestGitHub(config, endpoint, options = {}) {
         headers['content-type'] = 'application/json';
     }
 
-    const maxAttempts = options.retryAttempts || ((method === 'GET' || method === 'HEAD') ? 3 : 1);
+    const maxAttempts = options.retryAttempts || ((method === 'GET' || method === 'HEAD') ? 5 : 1);
     let response = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -1517,7 +1517,7 @@ async function listAllReleasesViaGraphql(config, repoPath) {
             memberContext,
             json: { query, variables: { owner: repo.owner, name: repo.repo, cursor } },
             action: '读取仓库 release 索引',
-            retryAttempts: 3,
+            retryAttempts: 5,
         });
         const parsed = parseGraphqlReleasePage(payload);
         releaseIds.push(...parsed.releaseIds);
@@ -3084,7 +3084,7 @@ async function getSpaceStats(config) {
         try {
             const bound = repositoryPool.bindRuntimeConfigToMember(config, member.repositoryId);
             await inspectReadableMember(config, snapshot.descriptor, member);
-            return { ok: true, ...(await scanMemberMaintenance(bound)) };
+            return { ok: true, repo: member.repo, ...(await scanMemberMaintenance(bound)) };
         } catch (error) {
             return { ok: false, repositoryId: member.repositoryId, repo: member.repo, error: error.message };
         }
@@ -3098,7 +3098,11 @@ async function getSpaceStats(config) {
     }
     const complete = !snapshot.stale && !ledgerError && memberResults.every((member) => member.ok);
     const successful = memberResults.filter((member) => member.ok);
-    const backups = successful.flatMap((member) => member.backups);
+    const backups = successful.flatMap((member) => member.backups.map((backup) => ({
+        ...backup,
+        repositoryId: member.repositoryId,
+        repository: member.repo,
+    })));
     const storeAssets = successful.flatMap((member) => member.assets);
     const referencedAssets = successful.flatMap((member) => member.referencedAssets);
     const orphanAssets = successful.flatMap((member) => member.orphanAssets);
@@ -3111,6 +3115,54 @@ async function getSpaceStats(config) {
     const protectedAssets = orphanAssets.filter((asset) => !reclaimableKeys.has(`${asset.repositoryId}:${asset.key}`));
     const backupAssetBytes = successful.reduce((sum, member) => sum + member.backupAssetBytes, 0);
     const storeReleaseCount = successful.reduce((sum, member) => sum + member.storeReleaseCount, 0);
+    const repositories = memberResults.map((member) => {
+        const memberReclaimable = reclaimableAssets.filter((asset) => asset.repositoryId === member.repositoryId);
+        return {
+            repositoryId: member.repositoryId,
+            repo: member.repo,
+            complete: member.ok,
+            error: member.error || null,
+            backups: {
+                totalCount: member.backups?.length || 0,
+                manualCount: member.backups?.filter((backup) => !backup.automatic).length || 0,
+                automaticCount: member.backups?.filter((backup) => backup.automatic).length || 0,
+                metaBytes: member.backupAssetBytes || 0,
+            },
+            chunkStore: {
+                releaseCount: member.storeReleaseCount || 0,
+                total: summarizeChunkAssets(member.assets || []),
+                referenced: summarizeChunkAssets(member.referencedAssets || []),
+                reclaimable: summarizeChunkAssets(memberReclaimable),
+            },
+            totalBytes: (member.backupAssetBytes || 0) + summarizeChunkAssets(member.assets || []).bytes,
+        };
+    });
+    const deviceGroups = new Map();
+    for (const backup of backups) {
+        const deviceId = trimToEmpty(backup.device?.id) || `name:${trimToEmpty(backup.device?.name) || UNKNOWN_DEVICE_NAME}`;
+        if (!deviceGroups.has(deviceId)) {
+            deviceGroups.set(deviceId, {
+                deviceId,
+                deviceName: trimToEmpty(backup.device?.name) || UNKNOWN_DEVICE_NAME,
+                totalCount: 0,
+                manualCount: 0,
+                automaticCount: 0,
+                logicalBytes: 0,
+                repositories: new Set(),
+            });
+        }
+        const device = deviceGroups.get(deviceId);
+        device.totalCount += 1;
+        device.manualCount += backup.automatic ? 0 : 1;
+        device.automaticCount += backup.automatic ? 1 : 0;
+        device.logicalBytes += Number(backup.archive?.totalBytes) || 0;
+        device.repositories.add(backup.repositoryId);
+    }
+    const devices = Array.from(deviceGroups.values()).map((device) => ({
+        ...device,
+        repositoryCount: device.repositories.size,
+        repositories: undefined,
+    })).sort((left, right) => right.logicalBytes - left.logicalBytes);
 
     return {
         backups: {
@@ -3128,10 +3180,13 @@ async function getSpaceStats(config) {
             protected: summarizeChunkAssets(protectedAssets),
             reclaimable: summarizeChunkAssets(reclaimableAssets),
         },
+        repositories,
+        devices,
         gcGraceHours: Math.round(CHUNK_GC_GRACE_MS / (60 * 60 * 1000)),
         complete,
         members: memberResults.map((member) => ({
             repositoryId: member.repositoryId,
+            repo: member.repo,
             complete: member.ok,
             error: member.error || null,
         })),

@@ -44,7 +44,18 @@ test('backup actions retain repository identity and partial state', () => {
     assert.match(app, /elements\.backupList\.innerHTML = poolNotice \|\|/);
     assert.match(app, /backup\.source\?\.repo/);
     assert.match(server, /isRetryableGitHubStatus\(response\.status\)/);
-    assert.match(server, /action: '读取仓库 release 索引',[\s\S]*retryAttempts: 3/);
+    assert.match(server, /\(method === 'GET' \|\| method === 'HEAD'\) \? 5 : 1/);
+    assert.match(server, /action: '读取仓库 release 索引',[\s\S]*retryAttempts: 5/);
+});
+
+test('maintenance space stats break usage down by repository and device', () => {
+    assert.match(server, /repositories,/);
+    assert.match(server, /devices,/);
+    assert.match(server, /logicalBytes/);
+    assert.match(app, />按仓库</);
+    assert.match(app, />按设备</);
+    assert.match(app, /实际占用/);
+    assert.match(app, /档案数据量/);
 });
 
 test('segment switch requires the expected active segment', () => {

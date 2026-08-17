@@ -678,6 +678,83 @@ select:focus {
     font-size: 0.9rem;
 }
 
+.space-breakdown {
+    padding-top: 14px;
+    border-top: 1px solid color-mix(in srgb, var(--line) 42%, transparent);
+}
+
+.space-breakdown h3 {
+    margin: 0;
+    font-size: 1rem;
+}
+
+.space-breakdown-heading {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.space-breakdown-heading span,
+.space-breakdown-name span {
+    color: var(--muted);
+    font-size: 0.86rem;
+}
+
+.space-breakdown-list {
+    display: grid;
+    margin-top: 8px;
+}
+
+.space-breakdown-row {
+    display: grid;
+    grid-template-columns: minmax(180px, 0.8fr) minmax(0, 1.2fr);
+    gap: 16px;
+    align-items: center;
+    padding: 11px 0;
+    border-bottom: 1px solid color-mix(in srgb, var(--line) 28%, transparent);
+}
+
+.space-breakdown-row:last-child {
+    border-bottom: 0;
+}
+
+.space-breakdown-name {
+    display: grid;
+    min-width: 0;
+    gap: 2px;
+}
+
+.space-breakdown-name strong {
+    overflow-wrap: anywhere;
+}
+
+.space-breakdown-values {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 6px 14px;
+    color: var(--muted);
+}
+
+@media (max-width: 640px) {
+    .space-breakdown-heading,
+    .space-breakdown-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .space-breakdown-row {
+        gap: 7px;
+    }
+
+    .space-breakdown-values {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        justify-content: initial;
+    }
+}
+
 .backup-card {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

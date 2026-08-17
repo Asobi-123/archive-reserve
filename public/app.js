@@ -635,6 +635,35 @@ function renderSpaceStats() {
         return;
     }
 
+    const repositoryRows = (stats.repositories || []).map((repository) => `
+        <div class="space-breakdown-row">
+            <div class="space-breakdown-name">
+                <strong>${escapeHtml(repository.repo || '未知仓库')}</strong>
+                <span>${repository.complete ? '统计完成' : escapeHtml(repository.error || '统计失败')}</span>
+            </div>
+            <div class="space-breakdown-values">
+                <span>实际占用 ${formatBytes(repository.totalBytes)}</span>
+                <span>档案 ${repository.backups?.totalCount || 0} 个</span>
+                <span>分块 ${repository.chunkStore?.total?.count || 0} 个</span>
+                <span>可回收 ${formatBytes(repository.chunkStore?.reclaimable?.bytes || 0)}</span>
+            </div>
+        </div>
+    `).join('');
+    const deviceRows = (stats.devices || []).map((device) => `
+        <div class="space-breakdown-row">
+            <div class="space-breakdown-name">
+                <strong>${escapeHtml(device.deviceName || 'Unknown Device')}</strong>
+                <span>${device.repositoryCount || 0} 个仓库</span>
+            </div>
+            <div class="space-breakdown-values">
+                <span>档案 ${device.totalCount || 0} 个</span>
+                <span>手动 ${device.manualCount || 0} 个</span>
+                <span>自动 ${device.automaticCount || 0} 个</span>
+                <span>档案数据量 ${formatBytes(device.logicalBytes)}</span>
+            </div>
+        </div>
+    `).join('');
+
     elements.spaceStats.innerHTML = `
         ${stats.complete ? '' : '<div class="empty-state">本次扫描不完整，统计仅供参考；已禁止依据本次结果回收分块。</div>'}
         <div class="space-grid">
@@ -659,6 +688,17 @@ function renderSpaceStats() {
                 <p>${formatBytes(stats.chunkStore.reclaimable.bytes)}</p>
             </article>
         </div>
+        <section class="space-breakdown">
+            <h3>按仓库</h3>
+            <div class="space-breakdown-list">${repositoryRows || '<p class="field-hint">没有可显示的仓库统计。</p>'}</div>
+        </section>
+        <section class="space-breakdown">
+            <div class="space-breakdown-heading">
+                <h3>按设备</h3>
+                <span>档案数据量未扣除跨备份复用的分块</span>
+            </div>
+            <div class="space-breakdown-list">${deviceRows || '<p class="field-hint">没有可显示的设备统计。</p>'}</div>
+        </section>
         <div class="space-meta">统计时间：${escapeHtml(formatDate(stats.checkedAt))}</div>
     `;
 }
