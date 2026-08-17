@@ -333,7 +333,9 @@ function adoptRemoteDescriptor(config, descriptor, githubRepositoryId) {
     config.poolId = pool.poolId;
     config.catalogRepositoryId = pool.catalogRepositoryId;
     config.repositories = pool.repositories;
-    config.repo = remoteMember.repo;
+    const catalogMember = pool.repositories.find((member) => member.repositoryId === pool.catalogRepositoryId);
+    if (!catalogMember) throw new Error('Remote pool has no catalog member.');
+    config.repo = catalogMember.repo;
     return config;
 }
 

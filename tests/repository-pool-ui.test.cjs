@@ -17,8 +17,9 @@ test('pool UI exposes member admission and explicit backup placement', () => {
     assert.match(html, /class="config-basics"/);
     assert.match(html, /id="pool-guide-toggle"[^>]+aria-expanded="false"/);
     assert.match(html, /id="pool-guide" class="pool-guide hidden"/);
-    assert.match(html, /多仓库只用于累积可用容量，不会均衡分配/);
-    assert.match(html, /新仓库的第一份备份需要重新上传可复用数据/);
+    assert.match(html, /多台设备可以使用同一仓库/);
+    assert.match(html, /不会在仓库之间自动均衡/);
+    assert.match(html, /新仓库的第一份备份需要建立可复用数据/);
     assert.match(html, /id="backup-repository-input"/);
     assert.match(app, /apiRequest\('\/pool\/members'/);
     assert.match(app, /configPayload\(\{ repo, token \}\)/);
@@ -31,6 +32,7 @@ test('pool UI exposes member admission and explicit backup placement', () => {
     assert.doesNotMatch(app, /成员仓库<\/span>/);
     assert.match(app, />主仓库<\/span>/);
     assert.doesNotMatch(app, /token 已配置/);
+    assert.doesNotMatch(`${html}\n${app}`, /旧版|旧备份|已有序列|原仓库/);
 });
 
 test('backup actions retain repository identity and partial state', () => {
@@ -44,5 +46,14 @@ test('backup actions retain repository identity and partial state', () => {
 test('segment switch requires the expected active segment', () => {
     assert.match(html, /id="active-pool-repository-input"/);
     assert.match(app, /expectedSegmentId: select\.dataset\.segmentId/);
-    assert.match(app, /切换只影响之后创建的完整备份/);
+    assert.match(app, /之后创建的备份将写入所选仓库/);
+});
+
+test('create backup view reflects the current lane repository', () => {
+    assert.match(html, /id="backup-repository-label"/);
+    assert.match(html, /id="backup-repository-hint"/);
+    assert.match(app, /const activeSegment = findCurrentLaneEntry\(\)/);
+    assert.match(app, /const displayedMembers = activeSegment \? \(activeMember \? \[activeMember\] : \[\]\) : writableMembers/);
+    assert.match(app, /textContent = activeSegment \? '当前写入仓库' : '首次写入仓库'/);
+    assert.match(app, /dataset\.fixed = String\(Boolean\(activeSegment\)\)/);
 });

@@ -109,6 +109,25 @@ test('adopts every remote member while preserving local token overrides', () => 
     assert.equal(runtime.repositories[1].tokenOverride, undefined);
 });
 
+test('adopts an existing pool from a non-catalog member without changing the catalog address', () => {
+    const local = buildV2ConfigFromLegacy({ repo: 'owner/archive-b', token: 'shared-token' }, {
+        idFactory: idFactory(),
+        githubRepositoryId: '1002',
+    });
+    const runtime = toRuntimeConfig(local);
+    const descriptor = createEmptyDescriptor({ poolId: 'pool-remote', catalogRepositoryId: 'repo-remote-a' });
+    descriptor.members = [
+        { repositoryId: 'repo-remote-a', githubRepositoryId: '1001', repo: 'owner/archive-a', membershipState: 'active' },
+        { repositoryId: 'repo-remote-b', githubRepositoryId: '1002', repo: 'owner/archive-b', membershipState: 'active' },
+    ];
+
+    adoptRemoteDescriptor(runtime, descriptor, '1002');
+    const saved = serializeRuntimeConfig(runtime);
+    assert.equal(runtime.repo, 'owner/archive-a');
+    assert.equal(saved.repositories.find((member) => member.repositoryId === 'repo-remote-a').repo, 'owner/archive-a');
+    assert.equal(saved.repositories.find((member) => member.repositoryId === 'repo-remote-b').repo, 'owner/archive-b');
+});
+
 test('builds legacy lanes conservatively and preserves a negative-infinity segment', () => {
     const backups = [
         { device: { id: 'device-a', name: 'MacBook' }, backupRoot: { root: 'default-user' } },

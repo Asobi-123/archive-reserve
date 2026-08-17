@@ -48,8 +48,9 @@
                 </div>
                 <div id="pool-guide" class="pool-guide hidden">
                     <p><strong>主仓库</strong>是第一次添加的仓库，负责保存仓库池配置；它不代表所有新备份都会写到这里。</p>
-                    <p>多仓库只用于累积可用容量，不会均衡分配，也不会移动已有备份。每份备份只会完整保存在一个仓库中。</p>
-                    <p>切换当前写入仓库只影响之后的备份。新仓库的第一份备份需要重新上传可复用数据，因此会明显更久；后续备份会在该仓库内复用未变化的数据。</p>
+                    <p>多台设备可以使用同一仓库，并查看或恢复彼此创建的备份。</p>
+                    <p>添加多个仓库会增加可用容量。系统不会拆分一份备份，也不会在仓库之间自动均衡。</p>
+                    <p>每台设备第一次创建备份时选择写入仓库，以后可在这里切换。新仓库的第一份备份需要建立可复用数据，因此耗时更长。</p>
                 </div>
                 <form id="config-form" class="form-grid">
                     <div class="field pool-members-field">
@@ -61,7 +62,7 @@
                         <label id="active-pool-repository-field" class="field hidden">
                             <span>当前写入仓库</span>
                             <select id="active-pool-repository-input"></select>
-                            <small class="field-hint">旧备份仍留在原仓库；切换后的第一份备份需要重新上传可复用数据。</small>
+                            <small class="field-hint">选择这台设备接下来创建备份时使用的仓库。切换到新仓库后的第一份备份会更久。</small>
                         </label>
                         <div id="pool-member-editor" class="pool-member-editor hidden">
                             <strong id="pool-member-editor-title">添加仓库</strong>
@@ -171,9 +172,9 @@
                 <p id="backup-root-hint" class="panel-hint"></p>
                 <form id="backup-form" class="form-grid">
                     <label id="backup-repository-field" class="field hidden">
-                        <span>新备份仓库</span>
+                        <span id="backup-repository-label">写入仓库</span>
                         <select id="backup-repository-input"></select>
-                        <small class="field-hint">只有创建新的备份序列时使用；已有序列继续沿用当前活动分段。</small>
+                        <small id="backup-repository-hint" class="field-hint"></small>
                     </label>
                     <label class="field">
                         <span>备份名</span>

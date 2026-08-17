@@ -81,7 +81,9 @@ function cacheElements() {
     elements.backupNameInput = document.getElementById('backup-name-input');
     elements.backupNoteInput = document.getElementById('backup-note-input');
     elements.backupRepositoryField = document.getElementById('backup-repository-field');
+    elements.backupRepositoryLabel = document.getElementById('backup-repository-label');
     elements.backupRepositoryInput = document.getElementById('backup-repository-input');
+    elements.backupRepositoryHint = document.getElementById('backup-repository-hint');
     elements.backupList = document.getElementById('backup-list');
     elements.backupSearchInput = document.getElementById('backup-search-input');
     elements.backupSearchMeta = document.getElementById('backup-search-meta');
@@ -319,12 +321,16 @@ function renderAutoBackupStatus() {
     elements.autoBackupStatus.textContent = `当前间隔：每 ${hours} 小时；自动档案保留 ${keepCount} 个；手动档案保留 ${manualKeepCount || '不限'}；${nextRunText}；${lastResultText}`;
 }
 
-function renderPoolMembers() {
-    const members = (state.config?.repositories || []).filter((member) => member.repo);
-    const laneEntry = Object.entries(state.pool?.backupLanes || {}).find(([, lane]) => (
+function findCurrentLaneEntry() {
+    return Object.entries(state.pool?.backupLanes || {}).find(([, lane]) => (
         lane.identity?.backupRoot === (state.config?.backupRoot || '')
         && (lane.identity?.deviceId === state.config?.deviceId || lane.identity?.deviceIdAliases?.includes(state.config?.deviceId))
     ));
+}
+
+function renderPoolMembers() {
+    const members = (state.config?.repositories || []).filter((member) => member.repo);
+    const laneEntry = findCurrentLaneEntry();
     const activeSegment = laneEntry?.[1]?.segments?.at(-1) || null;
     elements.poolMemberList.innerHTML = members.length
         ? members.map((member) => {
@@ -388,7 +394,7 @@ async function onActivePoolRepositoryChange() {
     const previousRepositoryId = state.pool?.backupLanes?.[select.dataset.laneId]?.segments?.at(-1)?.repositoryId || '';
     const repositoryId = select.value;
     if (!repositoryId || repositoryId === previousRepositoryId) return;
-    if (isBusy() || !window.confirm('切换只影响之后创建的完整备份。旧档案保留在原仓库；切换后的首份备份需要重新上传该段分块。确定继续吗？')) {
+    if (isBusy() || !window.confirm('之后创建的备份将写入所选仓库。该仓库的第一份备份需要建立可复用数据。确定切换吗？')) {
         select.value = previousRepositoryId;
         return;
     }
@@ -408,12 +414,25 @@ async function onActivePoolRepositoryChange() {
 }
 
 function renderBackupRepositoryOptions() {
-    const members = (state.config?.repositories || []).filter((member) => (
+    const allMembers = (state.config?.repositories || []).filter((member) => member.membershipState === 'active');
+    const writableMembers = allMembers.filter((member) => (
         member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false && member.hasToken
     ));
-    elements.backupRepositoryField.classList.toggle('hidden', members.length <= 1);
-    elements.backupRepositoryInput.innerHTML = members.map((member) => (
-        `<option value="${escapeHtml(member.repositoryId)}">${escapeHtml(member.repo)}</option>`
+    const activeSegment = findCurrentLaneEntry()?.[1]?.segments?.at(-1) || null;
+    const activeMember = activeSegment
+        ? allMembers.find((member) => member.repositoryId === activeSegment.repositoryId)
+        : null;
+    const displayedMembers = activeSegment ? (activeMember ? [activeMember] : []) : writableMembers;
+
+    elements.backupRepositoryField.classList.toggle('hidden', displayedMembers.length === 0);
+    elements.backupRepositoryLabel.textContent = activeSegment ? '当前写入仓库' : '首次写入仓库';
+    elements.backupRepositoryHint.textContent = activeSegment
+        ? '这台设备创建的新备份会写入该仓库。要更换仓库，请前往仓库设置。'
+        : '选择这台设备第一次创建备份时使用的仓库。';
+    elements.backupRepositoryInput.dataset.fixed = String(Boolean(activeSegment));
+    elements.backupRepositoryInput.disabled = Boolean(activeSegment);
+    elements.backupRepositoryInput.innerHTML = displayedMembers.map((member) => (
+        `<option value="${escapeHtml(member.repositoryId)}" ${member.repositoryId === activeSegment?.repositoryId ? 'selected' : ''}>${escapeHtml(member.repo)}</option>`
     )).join('');
 }
 
@@ -966,7 +985,7 @@ function renderBackupList() {
                 <p class="backup-note">${escapeHtml(backup.note || '无备注')}</p>
                 <div class="backup-meta">
                     <span class="meta-chip">设备：${escapeHtml(backup.device.name)}</span>
-                    <span class="meta-chip">来源：${escapeHtml(backup.source?.repo || backup.repositoryId || '旧版单仓')}</span>
+                    <span class="meta-chip">来源：${escapeHtml(backup.source?.repo || backup.repositoryId || '未记录来源')}</span>
                     <span class="meta-chip">目录：${escapeHtml(formatBackupRootLabel(backup))}</span>
                     <span class="meta-chip">时间：${escapeHtml(formatDate(backup.createdAt))}</span>
                     <span class="meta-chip">体积：${escapeHtml(formatBytes(backup.archive.totalBytes))}</span>
@@ -994,7 +1013,7 @@ function renderBackupList() {
 }
 
 function formatBackupRootLabel(backup) {
-    return backup.backupRoot?.label || '旧版默认目录';
+    return backup.backupRoot?.label || '默认备份目录';
 }
 
 function syncBackupActionMenus() {
@@ -1020,6 +1039,7 @@ function syncInteractivity() {
     elements.saveConfigButton.disabled = locked;
     elements.backupNameInput.disabled = locked;
     elements.backupNoteInput.disabled = locked;
+    elements.backupRepositoryInput.disabled = locked || elements.backupRepositoryInput.dataset.fixed === 'true';
     elements.createBackupButton.disabled = locked;
     elements.deviceFilter.disabled = locked;
     elements.backupSearchInput.disabled = locked;
