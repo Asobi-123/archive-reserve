@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { aggregateMemberBackupResults } = require('../repository-pool-routing.js');
+const { aggregateMemberBackupResults, assertBackupRepository } = require('../repository-pool-routing.js');
 
 test('aggregates equal release IDs without losing repository identity', () => {
     const result = aggregateMemberBackupResults([
@@ -43,4 +43,13 @@ test('reports failed members and stale descriptors as partial state', () => {
     assert.equal(result.members[1].error, 'timeout');
     assert.equal(result.freshness.stale, true);
     assert.equal(result.freshness.error, 'catalog timeout');
+});
+
+test('rejects a backup whose embedded repository differs from the selected source', () => {
+    assert.equal(assertBackupRepository({ repositoryId: '' }, 'repo-a'), true);
+    assert.equal(assertBackupRepository({ repositoryId: 'repo-a' }, 'repo-a'), true);
+    assert.throws(
+        () => assertBackupRepository({ repositoryId: 'repo-b' }, 'repo-a'),
+        (error) => error.statusCode === 409,
+    );
 });

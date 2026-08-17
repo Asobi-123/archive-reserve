@@ -10,7 +10,7 @@ const archiver = require('archiver');
 const express = require('express');
 const yauzl = require('yauzl');
 const repositoryPool = require('./repository-pool');
-const { aggregateMemberBackupResults } = require('./repository-pool-routing');
+const { aggregateMemberBackupResults, assertBackupRepository } = require('./repository-pool-routing');
 const {
     MARKER_PATH,
     createRepositoryPoolStore,
@@ -1584,6 +1584,21 @@ async function listPoolBackups(config) {
     });
 }
 
+async function resolveBackupSourceConfig(config, repositoryId) {
+    const snapshot = await readPoolDescriptorSnapshot(config);
+    const resolved = repositoryPool.resolveReadableMember(config, snapshot.descriptor, repositoryId);
+    return {
+        config: repositoryPool.bindRuntimeConfigToMember(config, resolved.member.repositoryId),
+        repositoryId: resolved.member.repositoryId,
+        member: resolved.member,
+        freshness: { stale: snapshot.stale, error: snapshot.error?.message || null },
+    };
+}
+
+function assertBackupSource(meta, repositoryId) {
+    return assertBackupRepository(meta, repositoryId);
+}
+
 function buildUploadUrl(release, assetName) {
     const base = release.upload_url.replace(/\{.*$/, '');
     return `${base}?name=${encodeURIComponent(assetName)}`;
@@ -2901,9 +2916,10 @@ async function getSpaceStats(config) {
     };
 }
 
-async function runBackupHealthCheck(config, releaseId) {
+async function runBackupHealthCheck(config, releaseId, repositoryId = '') {
     const release = await getRelease(config, releaseId);
     const meta = await getBackupMeta(config, release);
+    if (repositoryId) assertBackupSource(meta, repositoryId);
     const issues = [];
     const releaseAssetMaps = new Map();
 
@@ -3258,14 +3274,18 @@ const plugin = {
             ensureConfigured(config);
 
             const releaseId = parseReleaseId(req.params.releaseId);
-            const release = await getRelease(config, releaseId);
-            const meta = await getBackupMeta(config, release);
+            const source = await resolveBackupSourceConfig(config, req.query?.repositoryId);
+            const release = await getRelease(source.config, releaseId);
+            const meta = await getBackupMeta(source.config, release);
+            assertBackupSource(meta, source.repositoryId);
 
             res.json({
                 ok: true,
                 releaseId,
-                backup: backupFromRelease(release),
+                repositoryId: source.repositoryId,
+                backup: { ...backupFromRelease(release), repositoryId: source.repositoryId },
                 meta,
+                freshness: source.freshness,
             });
         }));
 
@@ -3274,7 +3294,12 @@ const plugin = {
                 const config = await readConfig();
                 ensureConfigured(config);
                 const releaseId = parseReleaseId(req.params.releaseId);
-                return await runBackupHealthCheck(config, releaseId);
+                const source = await resolveBackupSourceConfig(config, req.body?.repositoryId);
+                const result = await runBackupHealthCheck(source.config, releaseId, source.repositoryId);
+                result.repositoryId = source.repositoryId;
+                result.backup = { ...result.backup, repositoryId: source.repositoryId };
+                result.freshness = source.freshness;
+                return result;
             });
 
             res.json({
@@ -3369,8 +3394,10 @@ const plugin = {
                     ensureConfigured(config);
 
                     const releaseId = parseReleaseId(req.params.releaseId);
-                    const release = await getRelease(config, releaseId);
-                    const meta = await getBackupMeta(config, release);
+                    const source = await resolveBackupSourceConfig(config, req.query?.repositoryId);
+                    const release = await getRelease(source.config, releaseId);
+                    const meta = await getBackupMeta(source.config, release);
+                    assertBackupSource(meta, source.repositoryId);
                     const tempDir = await makeTempDir('download');
                     const stagingDir = path.join(tempDir, 'data');
 
@@ -3391,10 +3418,10 @@ const plugin = {
                             });
                             const storeKey = buildChunkStoreCacheKey(meta, chunk);
                             if (!storeReleaseCache.has(storeKey)) {
-                                storeReleaseCache.set(storeKey, await resolveChunkStoreRelease(config, meta, chunk));
+                                storeReleaseCache.set(storeKey, await resolveChunkStoreRelease(source.config, meta, chunk));
                             }
                             const storeRelease = storeReleaseCache.get(storeKey);
-                            const chunkPath = await materializeChunkArchive(config, storeRelease, chunk, tempDir);
+                            const chunkPath = await materializeChunkArchive(source.config, storeRelease, chunk, tempDir);
                             setOperationState('正在整理下载包', {
                                 current: index + 1,
                                 total: meta.chunks.length,

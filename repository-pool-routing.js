@@ -22,4 +22,13 @@ function aggregateMemberBackupResults(results, { descriptorStale = false, descri
     };
 }
 
-module.exports = { aggregateMemberBackupResults };
+function assertBackupRepository(meta, repositoryId) {
+    if (meta?.repositoryId && meta.repositoryId !== repositoryId) {
+        throw Object.assign(new Error('Backup metadata repository does not match the selected source.'), {
+            statusCode: 409,
+        });
+    }
+    return true;
+}
+
+module.exports = { aggregateMemberBackupResults, assertBackupRepository };

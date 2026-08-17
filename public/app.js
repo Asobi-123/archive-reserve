@@ -25,6 +25,7 @@ const state = {
     spaceStatsError: '',
     modal: {
         releaseId: null,
+        repositoryId: null,
         backup: null,
         meta: null,
         searchQuery: '',
@@ -722,15 +723,15 @@ function renderBackupList() {
             </div>
             <div class="backup-actions">
                 <div class="backup-action-primary">
-                    <button class="btn btn-secondary" type="button" data-action="select-restore" data-release-id="${backup.releaseId}">选择恢复</button>
-                    <button class="btn btn-secondary" type="button" data-action="full-restore" data-release-id="${backup.releaseId}">整包恢复</button>
+                    <button class="btn btn-secondary" type="button" data-action="select-restore" data-release-id="${backup.releaseId}" data-repository-id="${escapeHtml(backup.repositoryId || '')}">选择恢复</button>
+                    <button class="btn btn-secondary" type="button" data-action="full-restore" data-release-id="${backup.releaseId}" data-repository-id="${escapeHtml(backup.repositoryId || '')}">整包恢复</button>
                 </div>
                 <details class="backup-action-menu">
                     <summary class="backup-action-summary">更多操作</summary>
                     <div class="backup-action-secondary">
-                        <button class="btn btn-secondary" type="button" data-action="check-backup" data-release-id="${backup.releaseId}">检查</button>
-                        <button class="btn btn-secondary" type="button" data-action="download-backup" data-release-id="${backup.releaseId}">下载</button>
-                        <button class="btn btn-secondary" type="button" data-action="delete-backup" data-release-id="${backup.releaseId}">删除</button>
+                        <button class="btn btn-secondary" type="button" data-action="check-backup" data-release-id="${backup.releaseId}" data-repository-id="${escapeHtml(backup.repositoryId || '')}">检查</button>
+                        <button class="btn btn-secondary" type="button" data-action="download-backup" data-release-id="${backup.releaseId}" data-repository-id="${escapeHtml(backup.repositoryId || '')}">下载</button>
+                        <button class="btn btn-secondary" type="button" data-action="delete-backup" data-release-id="${backup.releaseId}" data-repository-id="${escapeHtml(backup.repositoryId || '')}">删除</button>
                     </div>
                 </details>
             </div>
@@ -956,6 +957,7 @@ async function onBackupListClick(event) {
 
     openTabForAction('library');
     const releaseId = Number(button.dataset.releaseId);
+    const repositoryId = button.dataset.repositoryId || '';
     const action = button.dataset.action;
 
     if (action === 'check-backup') {
@@ -968,6 +970,7 @@ async function onBackupListClick(event) {
         try {
             const result = await apiRequest(`/backups/${releaseId}/check`, {
                 method: 'POST',
+                body: { repositoryId },
             });
             state.currentOperation = '';
             setStatus(result.result.healthy ? '健康检查通过' : '健康检查发现问题', false);
@@ -1003,7 +1006,8 @@ async function onBackupListClick(event) {
             iframe.hidden = true;
             document.body.appendChild(iframe);
         }
-        iframe.src = `${API_BASE}/backups/${releaseId}/download?ts=${Date.now()}`;
+        const query = new URLSearchParams({ repositoryId, ts: String(Date.now()) });
+        iframe.src = `${API_BASE}/backups/${releaseId}/download?${query}`;
         syncOperationPolling();
         return;
     }
@@ -1046,7 +1050,7 @@ async function onBackupListClick(event) {
             return;
         }
 
-        await openRestoreModal(releaseId);
+        await openRestoreModal(releaseId, repositoryId);
         return;
     }
 
@@ -1087,7 +1091,7 @@ async function onBackupListClick(event) {
     }
 }
 
-async function openRestoreModal(releaseId) {
+async function openRestoreModal(releaseId, repositoryId) {
     if (isBusy()) {
         showToast(`当前正在执行：${state.currentOperation}`, 'error');
         return;
@@ -1095,8 +1099,10 @@ async function openRestoreModal(releaseId) {
 
     setStatus('正在读取备份树', true);
     try {
-        const result = await apiRequest(`/backups/${releaseId}/tree`);
+        const query = new URLSearchParams({ repositoryId });
+        const result = await apiRequest(`/backups/${releaseId}/tree?${query}`);
         state.modal.releaseId = releaseId;
+        state.modal.repositoryId = result.repositoryId;
         state.modal.backup = result.backup;
         state.modal.meta = result.meta;
         state.modal.searchQuery = '';
