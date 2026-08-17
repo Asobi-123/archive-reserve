@@ -54,6 +54,8 @@ function cacheElements() {
     elements.progressDetail = document.getElementById('progress-detail');
     elements.configForm = document.getElementById('config-form');
     elements.repoInput = document.getElementById('repo-input');
+    elements.repoInputLabel = document.getElementById('repo-input-label');
+    elements.repoInputHint = document.getElementById('repo-input-hint');
     elements.tokenInput = document.getElementById('token-input');
     elements.deviceNameInput = document.getElementById('device-name-input');
     elements.backupRootInput = document.getElementById('backup-root-input');
@@ -67,7 +69,13 @@ function cacheElements() {
     elements.poolMemberList = document.getElementById('pool-member-list');
     elements.poolMemberRepoInput = document.getElementById('pool-member-repo-input');
     elements.poolMemberTokenInput = document.getElementById('pool-member-token-input');
+    elements.poolMemberTokenHint = document.getElementById('pool-member-token-hint');
     elements.addPoolMemberButton = document.getElementById('add-pool-member-btn');
+    elements.poolMemberEditor = document.getElementById('pool-member-editor');
+    elements.confirmPoolMemberButton = document.getElementById('confirm-pool-member-btn');
+    elements.cancelPoolMemberButton = document.getElementById('cancel-pool-member-btn');
+    elements.activePoolRepositoryField = document.getElementById('active-pool-repository-field');
+    elements.activePoolRepositoryInput = document.getElementById('active-pool-repository-input');
     elements.backupRootHint = document.getElementById('backup-root-hint');
     elements.backupForm = document.getElementById('backup-form');
     elements.backupNameInput = document.getElementById('backup-name-input');
@@ -101,7 +109,12 @@ function cacheElements() {
 
 function bindEvents() {
     elements.configForm.addEventListener('submit', onSaveConfig);
-    elements.addPoolMemberButton.addEventListener('click', () => { void onAddPoolMember(); });
+    elements.addPoolMemberButton.addEventListener('click', openPoolMemberEditor);
+    elements.confirmPoolMemberButton.addEventListener('click', () => { void onAddPoolMember(); });
+    elements.cancelPoolMemberButton.addEventListener('click', closePoolMemberEditor);
+    elements.activePoolRepositoryInput.addEventListener('change', () => { void onActivePoolRepositoryChange(); });
+    elements.repoInput.addEventListener('blur', () => normalizeRepositoryInput(elements.repoInput));
+    elements.poolMemberRepoInput.addEventListener('blur', () => normalizeRepositoryInput(elements.poolMemberRepoInput));
     elements.poolMemberList.addEventListener('click', (event) => { void onPoolMemberListClick(event); });
     elements.backupForm.addEventListener('submit', onCreateBackup);
     elements.refreshButton.addEventListener('click', () => {
@@ -315,51 +328,70 @@ function renderPoolMembers() {
             const stateText = member.membershipState !== 'active'
                 ? member.membershipState
                 : member.lastKnownState?.writeEligible === false ? '不可写' : member.lastKnownState?.readable === false ? '不可读' : 'active';
-            const switchButton = member.membershipState === 'pending'
+            const action = member.membershipState === 'pending'
                 ? `<button class="btn btn-secondary" type="button" data-action="cancel-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}">取消加入</button>`
-                : laneEntry && !state.pool?.freshness?.stale && activeSegment?.repositoryId !== member.repositoryId && member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false
-                ? `<button class="btn btn-secondary" type="button" data-action="switch-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}" data-lane-id="${escapeHtml(laneEntry[0])}" data-segment-id="${escapeHtml(activeSegment.segmentId)}">后续备份切到这里</button>`
-                : `<span>${activeSegment?.repositoryId === member.repositoryId ? '当前分段' : (member.hasToken ? 'token 已配置' : '缺少 token')}</span>`;
-            return `<div class="pool-member-row"><strong>${escapeHtml(member.repo)}</strong><span>${escapeHtml(member.repositoryId)}</span><span>${escapeHtml(stateText)}</span>${switchButton}</div>`;
+                : `<span class="pool-member-token-state">${member.hasToken ? 'token 已配置' : '缺少 token'}</span>`;
+            const catalogBadge = member.repositoryId === state.config?.catalogRepositoryId
+                ? '<span class="pool-member-badge">目录仓库</span>'
+                : '<span class="pool-member-badge">成员仓库</span>';
+            const activeBadge = activeSegment?.repositoryId === member.repositoryId
+                ? '<span class="pool-member-badge is-current">当前写入</span>'
+                : '';
+            return `<div class="pool-member-row"><div class="pool-member-main"><strong>${escapeHtml(member.repo)}</strong><span>${catalogBadge}${activeBadge}</span></div><span class="pool-member-status">${escapeHtml(stateText)}</span>${action}</div>`;
         }).join('')
         : '<p class="field-hint">尚未初始化仓库池。</p>';
+
+    const writableMembers = members.filter((member) => (
+        member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false && member.hasToken
+    ));
+    const canSwitch = Boolean(laneEntry && activeSegment && writableMembers.length > 1 && !state.pool?.freshness?.stale);
+    elements.activePoolRepositoryField.classList.toggle('hidden', !canSwitch);
+    elements.activePoolRepositoryInput.innerHTML = writableMembers.map((member) => (
+        `<option value="${escapeHtml(member.repositoryId)}" ${member.repositoryId === activeSegment?.repositoryId ? 'selected' : ''}>${escapeHtml(member.repo)}</option>`
+    )).join('');
+    elements.activePoolRepositoryInput.dataset.laneId = laneEntry?.[0] || '';
+    elements.activePoolRepositoryInput.dataset.segmentId = activeSegment?.segmentId || '';
 }
 
 async function onPoolMemberListClick(event) {
-    const button = event.target.closest('[data-action="switch-pool-member"]');
     const cancelButton = event.target.closest('[data-action="cancel-pool-member"]');
-    if (!button && !cancelButton) return;
+    if (!cancelButton) return;
     if (isBusy()) {
         showToast(`当前正在执行：${state.currentOperation}`, 'error');
         return;
     }
-    if (cancelButton) {
-        if (!window.confirm('只会取消尚未承载备份 payload 的 pending member。确定取消吗？')) return;
-        try {
-            setOperation('正在取消仓库加入');
-            await apiRequest(`/pool/members/${encodeURIComponent(cancelButton.dataset.repositoryId)}`, { method: 'DELETE' });
-            await loadConfig();
-            showToast('已取消仓库加入', 'success');
-        } catch (error) {
-            state.currentOperation = '';
-            showToast(error.message || '取消仓库加入失败', 'error');
-        }
+    if (!window.confirm('只会取消尚未承载备份数据的待加入仓库。确定取消吗？')) return;
+    try {
+        setOperation('正在取消仓库加入');
+        await apiRequest(`/pool/members/${encodeURIComponent(cancelButton.dataset.repositoryId)}`, { method: 'DELETE' });
+        await loadConfig();
+        showToast('已取消仓库加入', 'success');
+    } catch (error) {
+        state.currentOperation = '';
+        showToast(error.message || '取消仓库加入失败', 'error');
+    }
+}
+
+async function onActivePoolRepositoryChange() {
+    const select = elements.activePoolRepositoryInput;
+    const previousRepositoryId = state.pool?.backupLanes?.[select.dataset.laneId]?.segments?.at(-1)?.repositoryId || '';
+    const repositoryId = select.value;
+    if (!repositoryId || repositoryId === previousRepositoryId) return;
+    if (isBusy() || !window.confirm('切换只影响之后创建的完整备份。旧档案保留在原仓库；切换后的首份备份需要重新上传该段分块。确定继续吗？')) {
+        select.value = previousRepositoryId;
         return;
     }
-    if (!window.confirm('切换只影响之后创建的完整备份。旧档案保留在原仓库；切换后的首份备份需要重新上传该段分块。确定继续吗？')) return;
     try {
         setOperation('正在切换后续备份仓库');
-        await apiRequest(`/pool/lanes/${encodeURIComponent(button.dataset.laneId)}/switch`, {
+        await apiRequest(`/pool/lanes/${encodeURIComponent(select.dataset.laneId)}/switch`, {
             method: 'POST',
-            body: {
-                repositoryId: button.dataset.repositoryId,
-                expectedSegmentId: button.dataset.segmentId,
-            },
+            body: { repositoryId, expectedSegmentId: select.dataset.segmentId },
         });
         await loadConfig();
         showToast('后续备份仓库已切换', 'success');
     } catch (error) {
         state.currentOperation = '';
+        select.value = previousRepositoryId;
         showToast(error.message || '切换仓库失败', 'error');
     }
 }
@@ -374,12 +406,51 @@ function renderBackupRepositoryOptions() {
     )).join('');
 }
 
+function normalizeRepositoryInput(input) {
+    const raw = input?.value?.trim() || '';
+    if (!raw) return '';
+    try {
+        const withProtocol = /^(?:https?:\/\/)/i.test(raw)
+            ? raw
+            : /^(?:www\.)?github\.com\//i.test(raw) ? `https://${raw}` : '';
+        if (withProtocol) {
+            const url = new URL(withProtocol);
+            if (['github.com', 'www.github.com'].includes(url.hostname.toLowerCase())) {
+                const parts = url.pathname.split('/').filter(Boolean);
+                if (parts.length >= 2) input.value = `${parts[0]}/${parts[1].replace(/\.git$/i, '')}`;
+            }
+        }
+    } catch (error) {
+        // 后端会返回统一的仓库地址校验错误。
+    }
+    return input.value.trim();
+}
+
+function openPoolMemberEditor() {
+    elements.poolMemberEditor.classList.remove('hidden');
+    elements.addPoolMemberButton.classList.add('hidden');
+    elements.poolMemberTokenInput.placeholder = state.config?.hasToken
+        ? '留空则沿用已保存的主 token'
+        : '填写可访问该仓库的 token';
+    elements.poolMemberTokenHint.textContent = state.config?.hasToken
+        ? '留空会沿用上方已保存的 token；只有该仓库需要不同权限时才填写。'
+        : '当前没有可沿用的 token，需要为该仓库填写 token。';
+    elements.poolMemberRepoInput.focus();
+}
+
+function closePoolMemberEditor() {
+    elements.poolMemberEditor.classList.add('hidden');
+    elements.addPoolMemberButton.classList.remove('hidden');
+    elements.poolMemberRepoInput.value = '';
+    elements.poolMemberTokenInput.value = '';
+}
+
 async function onAddPoolMember() {
     if (isBusy()) {
         showToast(`当前正在执行：${state.currentOperation}`, 'error');
         return;
     }
-    const repo = elements.poolMemberRepoInput.value.trim();
+    const repo = normalizeRepositoryInput(elements.poolMemberRepoInput);
     const token = elements.poolMemberTokenInput.value.trim();
     if (!repo) {
         showToast('请填写要加入的仓库。', 'error');
@@ -388,8 +459,7 @@ async function onAddPoolMember() {
     try {
         setOperation('正在加入仓库池');
         await apiRequest('/pool/members', { method: 'POST', body: { repo, token } });
-        elements.poolMemberRepoInput.value = '';
-        elements.poolMemberTokenInput.value = '';
+        closePoolMemberEditor();
         await loadConfig();
         showToast('仓库已加入仓库池', 'success');
     } catch (error) {
@@ -639,6 +709,12 @@ async function loadConfig() {
     state.spaceStatsError = '';
 
     elements.repoInput.value = result.config.repo || '';
+    elements.repoInput.readOnly = state.configured;
+    elements.repoInputLabel.textContent = state.configured ? '目录仓库（固定）' : '首次使用的 GitHub 仓库';
+    elements.repoInputHint.textContent = state.configured
+        ? '这是仓库池 catalog 的固定位置，只负责保存成员与分段目录。请在下方选择后续备份写入仓库。'
+        : '可以直接粘贴 GitHub 仓库主页、设置页等完整链接，无需手动删减。';
+    elements.addPoolMemberButton.disabled = !state.configured;
     elements.deviceNameInput.value = result.config.deviceName || '';
     renderBackupRootOptions(result.config.backupRoot || '');
     elements.autoBackupEnabledInput.checked = Boolean(result.config.autoBackupEnabled);
@@ -647,8 +723,8 @@ async function loadConfig() {
     elements.manualBackupKeepInput.value = String(result.config.manualBackupKeepCount || 0);
     elements.tokenInput.value = '';
     elements.tokenHint.textContent = result.config.hasToken
-        ? `当前已保存 token：${result.config.tokenPreview}`
-        : '当前还没有保存 token';
+        ? `已保存 ${result.config.tokenPreview}；这里留空再保存，会继续沿用，不会清除。`
+        : '当前还没有保存 token；首次连接需要填写。';
     elements.backupRootHint.textContent = state.backupRootLabel
         ? `当前备份根目录：${state.backupRootLabel}。自动排除 .gitkeep / .DS_Store；扩展目录的 .git 会一并保留。`
         : '';
