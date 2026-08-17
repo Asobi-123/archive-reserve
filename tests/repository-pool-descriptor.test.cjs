@@ -6,6 +6,7 @@ const test = require('node:test');
 const {
     applyDescriptorOperation,
     createEmptyDescriptor,
+    deriveMemberCapabilities,
     repositoryMember,
     updateDescriptorWithCas,
 } = require('../repository-pool.js');
@@ -165,4 +166,30 @@ test('descriptor updates reject corrupt revisions before writing', () => {
         type: 'add-member',
         member: { repositoryId: 'repo-b', githubRepositoryId: '1002', repo: 'owner/b' },
     }), /revision must be a non-negative integer/);
+});
+
+test('member capabilities keep readable history separate from write eligibility', () => {
+    const member = { membershipState: 'active' };
+    assert.deepEqual(deriveMemberCapabilities({
+        member,
+        identityVerified: true,
+        readPermission: true,
+        writePermission: true,
+        mirrorRevision: 3,
+        catalogRevision: 4,
+        lastValidatedAt: '2026-07-25T00:00:00.000Z',
+    }), {
+        readable: true,
+        catalogSynced: false,
+        writeEligible: false,
+        lastValidatedAt: '2026-07-25T00:00:00.000Z',
+    });
+    assert.equal(deriveMemberCapabilities({
+        member: { membershipState: 'pending' },
+        identityVerified: true,
+        readPermission: true,
+        writePermission: true,
+        mirrorRevision: 4,
+        catalogRevision: 4,
+    }).readable, false);
 });

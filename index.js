@@ -10,6 +10,7 @@ const archiver = require('archiver');
 const express = require('express');
 const yauzl = require('yauzl');
 const repositoryPool = require('./repository-pool');
+const { createRepositoryPoolStore } = require('./repository-pool-github');
 
 const info = {
     id: 'archive-reserve',
@@ -1203,6 +1204,15 @@ function repoApiPath(config, memberContext = null) {
     };
 }
 
+function createPoolStore(config) {
+    return createRepositoryPoolStore({
+        request: async (memberContext, endpoint, options = {}) => await requestGitHub(config, endpoint, {
+            ...options,
+            memberContext,
+        }),
+    });
+}
+
 async function requestGitHub(config, endpoint, options = {}) {
     const fetchFn = await getFetchFn();
     const memberContext = options.memberContext || repositoryPool.resolveMemberContext(config);
@@ -1364,7 +1374,7 @@ async function ensureRepositoryReady(config) {
     const memberContext = repositoryPool.resolveMemberContext(config);
     const repoInfoPath = repoApiPath(config, memberContext);
     const repoInfo = await requestGitHub(config, repoInfoPath.path, { memberContext });
-    const verifiedMemberContext = repositoryPool.verifyGitHubRepositoryIdentity(memberContext, repoInfo);
+    let verifiedMemberContext = repositoryPool.verifyGitHubRepositoryIdentity(memberContext, repoInfo);
     if (verifiedMemberContext.githubRepositoryId !== memberContext.githubRepositoryId) {
         const pool = config.__poolConfig;
         const member = pool?.repositories?.find((candidate) => candidate.repositoryId === verifiedMemberContext.repositoryId);
@@ -1406,10 +1416,37 @@ async function ensureRepositoryReady(config) {
         }
     }
 
+    const releases = await listAllReleases(config);
+    const backups = releases.map(backupFromRelease).filter(Boolean);
+    const poolStore = createPoolStore(config);
+    const poolConfig = config.__poolConfig;
+    const catalog = await poolStore.ensureCatalog({
+        context: verifiedMemberContext,
+        poolId: poolConfig?.poolId || `pool-${createId()}`,
+        catalogRepositoryId: poolConfig?.catalogRepositoryId || verifiedMemberContext.repositoryId,
+        backups,
+    });
+    if (catalog.adopted) {
+        repositoryPool.adoptRemoteDescriptor(config, catalog.descriptor, verifiedMemberContext.githubRepositoryId);
+        config.__poolConfig.descriptorCache.sha = catalog.sha;
+        verifiedMemberContext = repositoryPool.resolveMemberContext(config);
+    } else if (config.__poolConfig) {
+        config.__poolConfig.descriptorCache = {
+            revision: catalog.descriptor.revision,
+            sha: catalog.sha,
+            fetchedAt: new Date().toISOString(),
+            stale: false,
+            descriptor: catalog.descriptor,
+        };
+    }
+    await saveConfig(config);
+
     return {
         ...repoInfoPath,
         defaultBranch,
         memberContext: verifiedMemberContext,
+        poolDescriptor: catalog.descriptor,
+        poolDescriptorSha: catalog.sha,
     };
 }
 

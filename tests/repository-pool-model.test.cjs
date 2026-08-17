@@ -8,6 +8,7 @@ const test = require('node:test');
 
 const {
     addDeviceIdAlias,
+    adoptRemoteDescriptor,
     assertTokenFreeDescriptor,
     buildLegacyLaneInventory,
     buildV2ConfigFromLegacy,
@@ -87,6 +88,25 @@ test('projects v2 config to legacy runtime fields without persisting legacy toke
     assert.equal(next.repositories[0].repo, 'owner/archive-renamed');
     assert.equal(Object.prototype.hasOwnProperty.call(next, 'repo'), false);
     assert.equal(Object.prototype.hasOwnProperty.call(next, 'token'), false);
+});
+
+test('adopts every remote member while preserving local token overrides', () => {
+    const persisted = buildV2ConfigFromLegacy({ repo: 'owner/archive-a', token: 'default-token' }, {
+        idFactory: idFactory(),
+        githubRepositoryId: '1001',
+    });
+    persisted.repositories[0].tokenOverride = 'catalog-override';
+    const runtime = toRuntimeConfig(persisted);
+    const descriptor = createEmptyDescriptor({ poolId: 'pool-remote', catalogRepositoryId: 'repo-remote-a' });
+    descriptor.members = [
+        { repositoryId: 'repo-remote-a', githubRepositoryId: '1001', repo: 'owner/archive-a', membershipState: 'active' },
+        { repositoryId: 'repo-remote-b', githubRepositoryId: '1002', repo: 'owner/archive-b', membershipState: 'active' },
+    ];
+    adoptRemoteDescriptor(runtime, descriptor, '1001');
+    assert.equal(runtime.catalogRepositoryId, 'repo-remote-a');
+    assert.equal(runtime.repositories.length, 2);
+    assert.equal(runtime.repositories[0].tokenOverride, 'catalog-override');
+    assert.equal(runtime.repositories[1].tokenOverride, undefined);
 });
 
 test('builds legacy lanes conservatively and preserves a negative-infinity segment', () => {

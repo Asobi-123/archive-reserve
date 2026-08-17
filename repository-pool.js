@@ -214,6 +214,64 @@ function validateMemberMarker(marker, { poolId, repositoryId, githubRepositoryId
     return true;
 }
 
+function adoptRemoteDescriptor(config, descriptor, githubRepositoryId) {
+    const pool = config?.__poolConfig;
+    if (!pool) throw new TypeError('A v2 runtime config is required to adopt a remote pool.');
+    const remoteMember = descriptor?.members?.find((member) => (
+        String(member.githubRepositoryId) === String(githubRepositoryId)
+    ));
+    if (!remoteMember) throw new Error('Remote pool has no member for this GitHub repository.');
+    const localMember = pool.repositories.find((member) => (
+        member.repositoryId === pool.catalogRepositoryId
+        || String(member.githubRepositoryId) === String(githubRepositoryId)
+    ));
+    if (!localMember) throw new Error('Local config has no member to adopt into the remote pool.');
+    const localCredentials = new Map(pool.repositories.map((member) => [
+        String(member.githubRepositoryId),
+        member.tokenOverride || '',
+    ]));
+    pool.repositories = descriptor.members.map((member) => repositoryMember({
+        ...member,
+        tokenOverride: localCredentials.get(String(member.githubRepositoryId)) || '',
+    }));
+    pool.poolId = descriptor.poolId;
+    pool.catalogRepositoryId = descriptor.catalogRepositoryId;
+    pool.descriptorCache = {
+        revision: descriptor.revision,
+        sha: null,
+        fetchedAt: new Date().toISOString(),
+        stale: false,
+        descriptor,
+    };
+    config.poolId = pool.poolId;
+    config.catalogRepositoryId = pool.catalogRepositoryId;
+    config.repositories = pool.repositories;
+    config.repo = remoteMember.repo;
+    return config;
+}
+
+function deriveMemberCapabilities({
+    member,
+    identityVerified = false,
+    readPermission = false,
+    writePermission = false,
+    mirrorRevision = null,
+    catalogRevision = null,
+    lastValidatedAt = null,
+}) {
+    const active = member?.membershipState === 'active';
+    const readable = active && identityVerified && readPermission;
+    const catalogSynced = readable
+        && Number.isInteger(mirrorRevision)
+        && mirrorRevision === catalogRevision;
+    return {
+        readable,
+        catalogSynced,
+        writeEligible: catalogSynced && writePermission,
+        lastValidatedAt,
+    };
+}
+
 function descriptorConflict(message) {
     const error = new Error(message);
     error.statusCode = 409;
@@ -471,7 +529,9 @@ module.exports = {
     buildV2ConfigFromLegacy,
     createEmptyDescriptor,
     deviceNameKeyHash,
+    deriveMemberCapabilities,
     addDeviceIdAlias,
+    adoptRemoteDescriptor,
     assertTokenFreeDescriptor,
     findLane,
     normalizeBackupRoot,
