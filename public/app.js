@@ -1069,6 +1069,7 @@ async function onBackupListClick(event) {
         try {
             await apiRequest(`/backups/${releaseId}`, {
                 method: 'DELETE',
+                body: { repositoryId },
             });
             state.backupsLoaded = false;
             if (state.activeTab === 'library') {

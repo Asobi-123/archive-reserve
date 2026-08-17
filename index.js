@@ -1591,8 +1591,8 @@ async function listPoolBackups(config) {
     });
 }
 
-async function resolveBackupSourceConfig(config, repositoryId) {
-    const snapshot = await readPoolDescriptorSnapshot(config);
+async function resolveBackupSourceConfig(config, repositoryId, { allowStale = true } = {}) {
+    const snapshot = await readPoolDescriptorSnapshot(config, { allowStale });
     const resolved = repositoryPool.resolveReadableMember(config, snapshot.descriptor, repositoryId);
     return {
         config: repositoryPool.bindRuntimeConfigToMember(config, resolved.member.repositoryId),
@@ -3402,7 +3402,7 @@ const plugin = {
                     throw buildError('恢复模式无效。');
                 }
 
-                const source = await resolveBackupSourceConfig(config, req.body?.repositoryId);
+                const source = await resolveBackupSourceConfig(config, req.body?.repositoryId, { allowStale: false });
                 const release = await getRelease(source.config, releaseId);
                 const meta = await getBackupMeta(source.config, release);
                 assertBackupSource(meta, source.repositoryId);
@@ -3563,8 +3563,21 @@ const plugin = {
                 ensureConfigured(config);
 
                 const releaseId = parseReleaseId(req.params.releaseId);
-                const release = await getRelease(config, releaseId);
-                await deleteRelease(config, releaseId, release.tag_name);
+                const source = await resolveBackupSourceConfig(config, req.body?.repositoryId, { allowStale: false });
+                let release;
+                try {
+                    release = await getRelease(source.config, releaseId);
+                } catch (error) {
+                    if (error.statusCode === 404) return;
+                    throw error;
+                }
+                const meta = await getBackupMeta(source.config, release);
+                assertBackupSource(meta, source.repositoryId);
+                try {
+                    await deleteRelease(source.config, releaseId, release.tag_name);
+                } catch (error) {
+                    if (error.statusCode !== 404) throw error;
+                }
             });
 
             res.json({
