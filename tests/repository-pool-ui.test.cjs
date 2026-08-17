@@ -15,6 +15,8 @@ test('pool UI exposes member admission and explicit backup placement', () => {
     assert.match(html, /id="pool-member-token-input"/);
     assert.doesNotMatch(html, /id="token-input"/);
     assert.match(html, /class="config-basics"/);
+    assert.match(html, /id="pool-guide-toggle"[^>]+aria-expanded="false"/);
+    assert.match(html, /id="pool-guide" class="pool-guide hidden"/);
     assert.match(html, /多仓库只用于累积可用容量，不会均衡分配/);
     assert.match(html, /新仓库的第一份备份需要重新上传可复用数据/);
     assert.match(html, /id="backup-repository-input"/);
@@ -24,6 +26,7 @@ test('pool UI exposes member admission and explicit backup placement', () => {
     assert.match(server, /router\.patch\('\/pool\/members\/:repositoryId\/credentials'/);
     assert.match(app, /repositoryId: elements\.backupRepositoryInput\.value/);
     assert.match(server, /repositoryId: trimToEmpty\(req\.body\?\.repositoryId\)/);
+    assert.match(server, /syncDescriptorMirror\(memberContext, descriptor\)/);
     assert.match(app, /normalizeRepositoryInput/);
     assert.doesNotMatch(app, /成员仓库<\/span>/);
     assert.match(app, />主仓库<\/span>/);

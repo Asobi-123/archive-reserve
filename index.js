@@ -2890,7 +2890,7 @@ async function assertMemberWriteEligible(config, descriptor, memberContext) {
     if (memberContext.repositoryId === descriptor.catalogRepositoryId) return true;
 
     const store = createPoolStore(config);
-    const [marker, mirror] = await Promise.all([
+    const [marker, initialMirror] = await Promise.all([
         store.readJson(memberContext, MARKER_PATH),
         store.readDescriptor(memberContext),
     ]);
@@ -2900,8 +2900,17 @@ async function assertMemberWriteEligible(config, descriptor, memberContext) {
         githubRepositoryId: member.githubRepositoryId,
         catalogRepositoryId: descriptor.catalogRepositoryId,
     });
+    let mirror = initialMirror;
     if (!mirror.exists || mirror.value.revision !== descriptor.revision) {
-        throw buildError('备份来源仓库的 pool descriptor 尚未同步，请先修复镜像。', 409);
+        try {
+            await store.syncDescriptorMirror(memberContext, descriptor);
+            mirror = await store.readDescriptor(memberContext);
+        } catch (error) {
+            throw buildError(`仓库 ${memberContext.repo} 的仓库池配置同步失败，请检查 token 权限后重试。`, 409, error.message);
+        }
+    }
+    if (!mirror.exists || mirror.value.revision !== descriptor.revision) {
+        throw buildError(`仓库 ${memberContext.repo} 的仓库池配置仍未同步，请稍后重试。`, 409);
     }
     return true;
 }

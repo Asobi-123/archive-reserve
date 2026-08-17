@@ -54,6 +54,8 @@ function cacheElements() {
     elements.progressFill = document.getElementById('progress-fill');
     elements.progressDetail = document.getElementById('progress-detail');
     elements.configForm = document.getElementById('config-form');
+    elements.poolGuide = document.getElementById('pool-guide');
+    elements.poolGuideToggle = document.getElementById('pool-guide-toggle');
     elements.deviceNameInput = document.getElementById('device-name-input');
     elements.backupRootInput = document.getElementById('backup-root-input');
     elements.autoBackupEnabledInput = document.getElementById('auto-backup-enabled-input');
@@ -107,6 +109,10 @@ function cacheElements() {
 
 function bindEvents() {
     elements.configForm.addEventListener('submit', onSaveConfig);
+    elements.poolGuideToggle.addEventListener('click', () => {
+        const expanded = elements.poolGuide.classList.toggle('hidden') === false;
+        elements.poolGuideToggle.setAttribute('aria-expanded', String(expanded));
+    });
     elements.addPoolMemberButton.addEventListener('click', () => openPoolMemberEditor());
     elements.confirmPoolMemberButton.addEventListener('click', () => { void onAddPoolMember(); });
     elements.cancelPoolMemberButton.addEventListener('click', closePoolMemberEditor);

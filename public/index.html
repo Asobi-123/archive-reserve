@@ -40,10 +40,13 @@
         <main class="tab-layout">
             <section class="panel tab-page" data-ar-page="config">
                 <div class="panel-head">
-                    <h2>仓库设置</h2>
+                    <div class="panel-title-with-help">
+                        <h2>仓库设置</h2>
+                        <button id="pool-guide-toggle" class="info-button" type="button" aria-label="查看仓库池说明" aria-expanded="false" title="仓库池说明">i</button>
+                    </div>
                     <p>仓库地址和访问令牌只保存在本地服务器侧。可直接粘贴 GitHub 仓库链接。</p>
                 </div>
-                <div class="pool-guide">
+                <div id="pool-guide" class="pool-guide hidden">
                     <p><strong>主仓库</strong>是第一次添加的仓库，负责保存仓库池配置；它不代表所有新备份都会写到这里。</p>
                     <p>多仓库只用于累积可用容量，不会均衡分配，也不会移动已有备份。每份备份只会完整保存在一个仓库中。</p>
                     <p>切换当前写入仓库只影响之后的备份。新仓库的第一份备份需要重新上传可复用数据，因此会明显更久；后续备份会在该仓库内复用未变化的数据。</p>
