@@ -6,8 +6,11 @@ const test = require('node:test');
 const {
     applyDescriptorOperation,
     createEmptyDescriptor,
+    createLaneReservation,
     deriveMemberCapabilities,
     repositoryMember,
+    resolveBackupReservation,
+    assertReservationCurrent,
     updateDescriptorWithCas,
 } = require('../repository-pool.js');
 
@@ -192,4 +195,39 @@ test('member capabilities keep readable history separate from write eligibility'
         mirrorRevision: 4,
         catalogRevision: 4,
     }).readable, false);
+});
+
+test('new lane reservations and pre-upload revalidation bind one member', () => {
+    const created = createLaneReservation({
+        backupRoot: 'default-user',
+        deviceId: 'device-new',
+        deviceName: 'New Device',
+        repositoryId: 'repo-b',
+        idFactory: (() => { let n = 0; return () => `new-${++n}`; })(),
+        now: '2026-07-25T03:00:00.000Z',
+    });
+    const next = applyDescriptorOperation(descriptor(), {
+        type: 'create-lane',
+        laneId: created.laneId,
+        lane: created.lane,
+    }).descriptor;
+    const resolved = resolveBackupReservation(next, {
+        backupRoot: 'default-user',
+        deviceId: 'device-new',
+        deviceName: 'New Device',
+    });
+    assert.equal(resolved.reservation.repositoryId, 'repo-b');
+    assert.doesNotThrow(() => assertReservationCurrent(next, resolved.reservation));
+    const switched = applyDescriptorOperation(next, {
+        type: 'switch-segment',
+        laneId: created.laneId,
+        expectedActiveSegmentId: created.segmentId,
+        segment: {
+            segmentId: 'segment-after',
+            repositoryId: 'repo-a',
+            startedAt: '2026-07-25T04:00:00.000Z',
+            reason: 'manual-switch',
+        },
+    }).descriptor;
+    assert.throws(() => assertReservationCurrent(switched, resolved.reservation), (error) => error.statusCode === 409);
 });

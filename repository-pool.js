@@ -179,6 +179,21 @@ function resolveMemberContext(config, repositoryId = null) {
     };
 }
 
+function bindRuntimeConfigToMember(config, repositoryId) {
+    const context = resolveMemberContext(config, repositoryId);
+    const bound = { ...config, repo: context.repo, token: context.token };
+    Object.defineProperty(bound, '__poolConfig', {
+        value: config.__poolConfig,
+        enumerable: false,
+        writable: true,
+    });
+    Object.defineProperty(bound, '__memberContext', {
+        value: context,
+        enumerable: false,
+    });
+    return bound;
+}
+
 function verifyGitHubRepositoryIdentity(context, repositoryInfo, { allowBootstrap = true } = {}) {
     const actualId = String(repositoryInfo?.id || '');
     if (!actualId) throw new Error('GitHub repository response has no immutable id.');
@@ -341,6 +356,11 @@ function applyDescriptorOperation(descriptor, operation, { now = new Date().toIS
         next.backupLanes[operation.laneId] = clone(operation.lane);
         return { descriptor: bumpDescriptor(next, now), changed: true };
     }
+    if (type === 'add-device-alias') {
+        const updated = addDeviceIdAlias(next, operation.laneId, operation.deviceId);
+        if (JSON.stringify(updated) === JSON.stringify(next)) return { descriptor: next, changed: false };
+        return { descriptor: bumpDescriptor(updated, now), changed: true };
+    }
     if (type === 'switch-segment') {
         const lane = next.backupLanes[operation.laneId];
         if (!lane) throw descriptorConflict(`Unknown lane: ${operation.laneId}`);
@@ -378,6 +398,52 @@ async function updateDescriptorWithCas({ read, write, operation, maxAttempts = 3
     const error = descriptorConflict('Descriptor update conflicted repeatedly; retry later.');
     error.cause = lastConflict;
     throw error;
+}
+
+function createLaneReservation({ backupRoot, deviceId, deviceName, repositoryId, idFactory = createId, now = new Date().toISOString() }) {
+    const laneId = idWithPrefix('lane', idFactory);
+    const segmentId = idWithPrefix('segment', idFactory);
+    return {
+        laneId,
+        segmentId,
+        repositoryId,
+        lane: {
+            identity: {
+                backupRoot: normalizeBackupRoot(backupRoot),
+                deviceId: trim(deviceId),
+                deviceIdAliases: [],
+                deviceNameKeyHash: deviceNameKeyHash(deviceName),
+            },
+            segments: [{ segmentId, repositoryId, startedAt: now, reason: 'initial' }],
+        },
+    };
+}
+
+function resolveBackupReservation(descriptor, identity) {
+    const match = findLane(descriptor, identity);
+    if (!match.lane) return { ...match, reservation: null };
+    const segment = match.lane.segments[match.lane.segments.length - 1];
+    if (!segment) throw new Error(`Lane has no segment: ${match.laneId}`);
+    return {
+        ...match,
+        reservation: {
+            laneId: match.laneId,
+            segmentId: segment.segmentId,
+            repositoryId: segment.repositoryId,
+            descriptorRevision: descriptor.revision,
+        },
+    };
+}
+
+function assertReservationCurrent(descriptor, reservation) {
+    const lane = descriptor?.backupLanes?.[reservation?.laneId];
+    const active = lane?.segments?.[lane.segments.length - 1];
+    if (!active
+        || active.segmentId !== reservation.segmentId
+        || active.repositoryId !== reservation.repositoryId) {
+        throw descriptorConflict('Backup segment changed before remote upload; retry the backup.');
+    }
+    return true;
 }
 
 function laneFromGroup(group, { idFactory = createId, repositoryId = '' } = {}) {
@@ -527,7 +593,9 @@ async function writeJsonAtomically(filePath, value, { backup = true } = {}) {
 module.exports = {
     buildLegacyLaneInventory,
     buildV2ConfigFromLegacy,
+    bindRuntimeConfigToMember,
     createEmptyDescriptor,
+    createLaneReservation,
     deviceNameKeyHash,
     deriveMemberCapabilities,
     addDeviceIdAlias,
@@ -538,7 +606,9 @@ module.exports = {
     normalizeDeviceKey,
     normalizeV2Config,
     repositoryMember,
+    resolveBackupReservation,
     resolveMemberContext,
+    assertReservationCurrent,
     serializeRuntimeConfig,
     toRuntimeConfig,
     verifyGitHubRepositoryIdentity,
