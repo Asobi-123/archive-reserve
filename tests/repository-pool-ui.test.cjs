@@ -25,6 +25,7 @@ test('pool UI exposes member admission and explicit backup placement', () => {
     assert.match(app, /configPayload\(\{ repo, token \}\)/);
     assert.match(app, /\/credentials`/);
     assert.match(server, /router\.patch\('\/pool\/members\/:repositoryId\/credentials'/);
+    assert.match(server, /updateRuntimeMemberCredential\(candidate, repositoryId, token\)/);
     assert.match(app, /repositoryId: elements\.backupRepositoryInput\.value/);
     assert.match(server, /repositoryId: trimToEmpty\(req\.body\?\.repositoryId\)/);
     assert.match(server, /syncDescriptorMirror\(memberContext, descriptor\)/);
@@ -42,12 +43,16 @@ test('backup actions retain repository identity and partial state', () => {
     assert.match(app, /部分仓库当前不可用/);
     assert.match(app, /elements\.backupList\.innerHTML = poolNotice \|\|/);
     assert.match(app, /backup\.source\?\.repo/);
+    assert.match(server, /isRetryableGitHubStatus\(response\.status\)/);
+    assert.match(server, /action: '读取仓库 release 索引',[\s\S]*retryAttempts: 3/);
 });
 
 test('segment switch requires the expected active segment', () => {
     assert.match(html, /id="active-pool-repository-input"/);
     assert.match(app, /expectedSegmentId: select\.dataset\.segmentId/);
     assert.match(app, /之后创建的备份将写入所选仓库/);
+    assert.match(server, /ready: Boolean\(targetMirror\?\.synced\)/);
+    assert.match(app, /result\?\.ready === false/);
 });
 
 test('create backup view reflects the current lane repository', () => {
@@ -57,4 +62,6 @@ test('create backup view reflects the current lane repository', () => {
     assert.match(app, /const displayedMembers = activeSegment \? \(activeMember \? \[activeMember\] : \[\]\) : writableMembers/);
     assert.match(app, /textContent = activeSegment \? '当前写入仓库' : '首次写入仓库'/);
     assert.match(app, /dataset\.fixed = String\(Boolean\(activeSegment\)\)/);
+    assert.match(server, /currentLaneId: currentLane\.laneId/);
+    assert.match(app, /state\.pool\?\.currentLaneId/);
 });

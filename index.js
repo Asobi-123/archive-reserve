@@ -10,7 +10,12 @@ const archiver = require('archiver');
 const express = require('express');
 const yauzl = require('yauzl');
 const repositoryPool = require('./repository-pool');
-const { aggregateMemberBackupResults, assertBackupRepository, parseGraphqlReleasePage } = require('./repository-pool-routing');
+const {
+    aggregateMemberBackupResults,
+    assertBackupRepository,
+    isRetryableGitHubStatus,
+    parseGraphqlReleasePage,
+} = require('./repository-pool-routing');
 const { assertStagingComplete, collectRequiredDirectories } = require('./repository-pool-restore');
 const {
     advanceCompleteScan,
@@ -1252,6 +1257,11 @@ async function requestGitHub(config, endpoint, options = {}) {
                 redirect: 'follow',
                 duplex: body && typeof body.pipe === 'function' ? 'half' : undefined,
             });
+            if (attempt < maxAttempts && isRetryableGitHubStatus(response.status)) {
+                await response.arrayBuffer();
+                await sleep(900 * attempt);
+                continue;
+            }
             break;
         } catch (error) {
             if (attempt < maxAttempts && isRetryableFetchError(error)) {
@@ -1507,6 +1517,7 @@ async function listAllReleasesViaGraphql(config, repoPath) {
             memberContext,
             json: { query, variables: { owner: repo.owner, name: repo.repo, cursor } },
             action: '读取仓库 release 索引',
+            retryAttempts: 3,
         });
         const parsed = parseGraphqlReleasePage(payload);
         releaseIds.push(...parsed.releaseIds);
@@ -1766,10 +1777,12 @@ async function switchPoolLane(config, { laneId, repositoryId, expectedSegmentId 
         .filter((member) => member.membershipState === 'active')
         .map((member) => repositoryPool.resolveMemberContext(config, member.repositoryId));
     const mirrorResults = await store.syncDescriptorMirrors(contexts, updated.descriptor);
+    const targetMirror = mirrorResults.find((result) => result.repositoryId === repositoryId);
     await saveConfig(config);
     return {
         laneId,
         segment: updated.descriptor.backupLanes[laneId].segments.at(-1),
+        ready: Boolean(targetMirror?.synced),
         mirrorResults: mirrorResults.map(({ error, ...result }) => ({ ...result, error: error?.message || null })),
     };
 }
@@ -3473,12 +3486,18 @@ const plugin = {
             const config = await readConfig();
             ensureConfigured(config);
             const snapshot = await readPoolDescriptorSnapshot(config);
+            const currentLane = repositoryPool.findLane(snapshot.descriptor, {
+                backupRoot: config.backupRoot,
+                deviceId: config.deviceId,
+                deviceName: config.deviceName,
+            });
             res.json({
                 ok: true,
                 poolId: snapshot.descriptor.poolId,
                 catalogRepositoryId: snapshot.descriptor.catalogRepositoryId,
                 repositories: toClientConfig(config).repositories,
                 backupLanes: snapshot.descriptor.backupLanes,
+                currentLaneId: currentLane.laneId || '',
                 freshness: { stale: snapshot.stale, error: snapshot.error?.message || null },
             });
         }));
@@ -3505,8 +3524,7 @@ const plugin = {
                 const repositoryId = trimToEmpty(req.params.repositoryId);
                 const member = candidate.__poolConfig.repositories.find((item) => item.repositoryId === repositoryId);
                 if (!member) throw buildError('仓库不属于当前仓库池。', 404);
-                if (repositoryId === candidate.__poolConfig.catalogRepositoryId) candidate.__poolConfig.defaultToken = token;
-                else member.tokenOverride = token;
+                repositoryPool.updateRuntimeMemberCredential(candidate, repositoryId, token);
                 await ensureRepositoryReady(bindRuntimeConfigToMember(candidate, repositoryId), { ensurePool: false });
                 await saveConfig(candidate);
                 return { repositoryId };

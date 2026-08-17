@@ -3,7 +3,17 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { aggregateMemberBackupResults, assertBackupRepository, parseGraphqlReleasePage } = require('../repository-pool-routing.js');
+const {
+    aggregateMemberBackupResults,
+    assertBackupRepository,
+    isRetryableGitHubStatus,
+    parseGraphqlReleasePage,
+} = require('../repository-pool-routing.js');
+
+test('retries transient GitHub responses without retrying permanent client errors', () => {
+    for (const status of [408, 429, 500, 502, 503, 504]) assert.equal(isRetryableGitHubStatus(status), true);
+    for (const status of [400, 401, 403, 404, 409, 422]) assert.equal(isRetryableGitHubStatus(status), false);
+});
 
 test('parses paginated GraphQL release IDs for REST detail fallback', () => {
     assert.deepEqual(parseGraphqlReleasePage({

@@ -322,6 +322,10 @@ function renderAutoBackupStatus() {
 }
 
 function findCurrentLaneEntry() {
+    const currentLaneId = state.pool?.currentLaneId;
+    if (currentLaneId && state.pool?.backupLanes?.[currentLaneId]) {
+        return [currentLaneId, state.pool.backupLanes[currentLaneId]];
+    }
     return Object.entries(state.pool?.backupLanes || {}).find(([, lane]) => (
         lane.identity?.backupRoot === (state.config?.backupRoot || '')
         && (lane.identity?.deviceId === state.config?.deviceId || lane.identity?.deviceIdAliases?.includes(state.config?.deviceId))
@@ -354,7 +358,7 @@ function renderPoolMembers() {
         : '<p class="field-hint">还没有仓库。添加第一个仓库后即可开始备份。</p>';
 
     const writableMembers = members.filter((member) => (
-        member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false && member.hasToken
+        member.membershipState === 'active' && member.hasToken
     ));
     const canSwitch = Boolean(laneEntry && activeSegment && writableMembers.length > 1 && !state.pool?.freshness?.stale);
     elements.activePoolRepositoryField.classList.toggle('hidden', !canSwitch);
@@ -400,12 +404,16 @@ async function onActivePoolRepositoryChange() {
     }
     try {
         setOperation('正在切换后续备份仓库');
-        await apiRequest(`/pool/lanes/${encodeURIComponent(select.dataset.laneId)}/switch`, {
+        const response = await apiRequest(`/pool/lanes/${encodeURIComponent(select.dataset.laneId)}/switch`, {
             method: 'POST',
             body: { repositoryId, expectedSegmentId: select.dataset.segmentId },
         });
         await loadConfig();
-        showToast('后续备份仓库已切换', 'success');
+        if (response.result?.ready === false) {
+            showToast('写入仓库已切换，但目标仓库尚未同步完成。请检查该仓库 token 后重试备份。', 'error');
+        } else {
+            showToast('后续备份仓库已切换', 'success');
+        }
     } catch (error) {
         state.currentOperation = '';
         select.value = previousRepositoryId;
@@ -416,7 +424,7 @@ async function onActivePoolRepositoryChange() {
 function renderBackupRepositoryOptions() {
     const allMembers = (state.config?.repositories || []).filter((member) => member.membershipState === 'active');
     const writableMembers = allMembers.filter((member) => (
-        member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false && member.hasToken
+        member.membershipState === 'active' && member.hasToken
     ));
     const activeSegment = findCurrentLaneEntry()?.[1]?.segments?.at(-1) || null;
     const activeMember = activeSegment

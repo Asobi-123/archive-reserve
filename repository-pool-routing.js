@@ -1,5 +1,11 @@
 'use strict';
 
+const RETRYABLE_GITHUB_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+
+function isRetryableGitHubStatus(status) {
+    return RETRYABLE_GITHUB_STATUSES.has(Number(status));
+}
+
 function parseGraphqlReleasePage(payload) {
     if (Array.isArray(payload?.errors) && payload.errors.length) {
         throw new Error(payload.errors.map((error) => error.message).join('; '));
@@ -55,4 +61,9 @@ function assertBackupRepository(meta, repositoryId) {
     return true;
 }
 
-module.exports = { aggregateMemberBackupResults, assertBackupRepository, parseGraphqlReleasePage };
+module.exports = {
+    aggregateMemberBackupResults,
+    assertBackupRepository,
+    isRetryableGitHubStatus,
+    parseGraphqlReleasePage,
+};
