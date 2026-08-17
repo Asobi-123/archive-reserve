@@ -156,6 +156,64 @@ function serializeRuntimeConfig(runtime) {
     return normalizeV2Config(pool);
 }
 
+function resolveMemberContext(config, repositoryId = null) {
+    const pool = config?.__poolConfig || config;
+    if (!pool || Number(pool.configVersion) !== 2) {
+        return {
+            repositoryId: repositoryId || 'legacy-catalog',
+            githubRepositoryId: '',
+            repo: trim(config?.repo),
+            token: trim(config?.token),
+            membershipState: 'active',
+        };
+    }
+    const targetId = repositoryId || pool.catalogRepositoryId;
+    const member = pool.repositories.find((candidate) => candidate.repositoryId === targetId);
+    if (!member) throw new Error(`Unknown repository member: ${targetId}`);
+    return {
+        repositoryId: member.repositoryId,
+        githubRepositoryId: String(member.githubRepositoryId || ''),
+        repo: member.repo,
+        token: member.tokenOverride || pool.defaultToken,
+        membershipState: member.membershipState || 'active',
+    };
+}
+
+function verifyGitHubRepositoryIdentity(context, repositoryInfo, { allowBootstrap = true } = {}) {
+    const actualId = String(repositoryInfo?.id || '');
+    if (!actualId) throw new Error('GitHub repository response has no immutable id.');
+    if (context.githubRepositoryId && context.githubRepositoryId !== actualId) {
+        throw new Error(`GitHub repository identity mismatch for ${context.repositoryId}`);
+    }
+    if (!context.githubRepositoryId && !allowBootstrap) {
+        throw new Error(`GitHub repository identity is not established for ${context.repositoryId}`);
+    }
+    return { ...context, githubRepositoryId: actualId };
+}
+
+function buildMemberMarker({ poolId, catalogRepositoryId, context, createdAt = new Date().toISOString() }) {
+    if (!poolId || !catalogRepositoryId || !context?.repositoryId || !context.githubRepositoryId) {
+        throw new TypeError('Complete pool and repository identity are required for a marker.');
+    }
+    return {
+        version: 1,
+        poolId,
+        repositoryId: context.repositoryId,
+        githubRepositoryId: String(context.githubRepositoryId),
+        catalogRepositoryId,
+        createdAt,
+    };
+}
+
+function validateMemberMarker(marker, { poolId, repositoryId, githubRepositoryId, catalogRepositoryId }) {
+    if (!marker || marker.version !== 1) throw new Error('Unsupported Archive Reserve pool marker.');
+    if (marker.poolId !== poolId) throw new Error('Archive Reserve pool ID mismatch.');
+    if (marker.repositoryId !== repositoryId) throw new Error('Archive Reserve repository ID mismatch.');
+    if (String(marker.githubRepositoryId) !== String(githubRepositoryId)) throw new Error('Archive Reserve GitHub repository ID mismatch.');
+    if (marker.catalogRepositoryId !== catalogRepositoryId) throw new Error('Archive Reserve catalog ID mismatch.');
+    return true;
+}
+
 function laneFromGroup(group, { idFactory = createId, repositoryId = '' } = {}) {
     const first = group[0];
     const deviceName = trim(first.device?.name);
@@ -312,7 +370,11 @@ module.exports = {
     normalizeDeviceKey,
     normalizeV2Config,
     repositoryMember,
+    resolveMemberContext,
     serializeRuntimeConfig,
     toRuntimeConfig,
+    verifyGitHubRepositoryIdentity,
+    buildMemberMarker,
+    validateMemberMarker,
     writeJsonAtomically,
 };

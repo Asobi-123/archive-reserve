@@ -1193,16 +1193,19 @@ async function removeDirectorySafe(targetPath) {
     }
 }
 
-function repoApiPath(config) {
-    const repo = parseRepoInput(config.repo);
+function repoApiPath(config, memberContext = null) {
+    const context = memberContext || repositoryPool.resolveMemberContext(config);
+    const repo = parseRepoInput(context.repo);
     return {
         repo,
         path: `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.repo)}`,
+        memberContext: context,
     };
 }
 
 async function requestGitHub(config, endpoint, options = {}) {
     const fetchFn = await getFetchFn();
+    const memberContext = options.memberContext || repositoryPool.resolveMemberContext(config);
     const url = endpoint.startsWith('http') ? endpoint : `${GITHUB_API_ROOT}${endpoint}`;
     const method = options.method || 'GET';
     const headers = {
@@ -1212,8 +1215,8 @@ async function requestGitHub(config, endpoint, options = {}) {
         ...(options.headers || {}),
     };
 
-    if (config?.token) {
-        headers.authorization = `Bearer ${config.token}`;
+    if (memberContext?.token) {
+        headers.authorization = `Bearer ${memberContext.token}`;
     }
 
     let body = options.body;
@@ -1339,7 +1342,7 @@ async function sleep(ms) {
     await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function initializeRepositoryContents(config, repoPath, defaultBranch) {
+async function initializeRepositoryContents(config, repoPath, defaultBranch, memberContext = null) {
     const bootstrapContent = Buffer.from(`Archive Reserve initialized at ${new Date().toISOString()}\n`, 'utf8').toString('base64');
     const payload = {
         message: 'Initialize Archive Reserve repository',
@@ -1353,16 +1356,26 @@ async function initializeRepositoryContents(config, repoPath, defaultBranch) {
     return await requestGitHub(config, `${repoPath}/contents/.archive-reserve`, {
         method: 'PUT',
         json: payload,
+        memberContext,
     });
 }
 
 async function ensureRepositoryReady(config) {
-    const repoInfoPath = repoApiPath(config);
-    const repoInfo = await requestGitHub(config, repoInfoPath.path);
+    const memberContext = repositoryPool.resolveMemberContext(config);
+    const repoInfoPath = repoApiPath(config, memberContext);
+    const repoInfo = await requestGitHub(config, repoInfoPath.path, { memberContext });
+    const verifiedMemberContext = repositoryPool.verifyGitHubRepositoryIdentity(memberContext, repoInfo);
+    if (verifiedMemberContext.githubRepositoryId !== memberContext.githubRepositoryId) {
+        const pool = config.__poolConfig;
+        const member = pool?.repositories?.find((candidate) => candidate.repositoryId === verifiedMemberContext.repositoryId);
+        if (member) member.githubRepositoryId = verifiedMemberContext.githubRepositoryId;
+    }
     const defaultBranch = repoInfo.default_branch || 'main';
 
     try {
-        await requestGitHub(config, `${repoInfoPath.path}/git/ref/heads/${encodeURIComponent(defaultBranch)}`);
+        await requestGitHub(config, `${repoInfoPath.path}/git/ref/heads/${encodeURIComponent(defaultBranch)}`, {
+            memberContext: verifiedMemberContext,
+        });
     } catch (error) {
         if (error.statusCode !== 404 && !isEmptyRepositoryError(error)) {
             throw error;
@@ -1371,7 +1384,7 @@ async function ensureRepositoryReady(config) {
         let lastBootstrapError = null;
         for (let attempt = 1; attempt <= 3; attempt += 1) {
             try {
-                await initializeRepositoryContents(config, repoInfoPath.path, defaultBranch);
+                await initializeRepositoryContents(config, repoInfoPath.path, defaultBranch, verifiedMemberContext);
                 lastBootstrapError = null;
                 break;
             } catch (bootstrapError) {
@@ -1396,6 +1409,7 @@ async function ensureRepositoryReady(config) {
     return {
         ...repoInfoPath,
         defaultBranch,
+        memberContext: verifiedMemberContext,
     };
 }
 
