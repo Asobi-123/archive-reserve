@@ -56,6 +56,15 @@ function createRepositoryPoolStore({ request }) {
         return { sha: response?.content?.sha || response?.sha || null, response };
     }
 
+    async function deleteJson(context, filePath, sha, { message = `Delete ${filePath}` } = {}) {
+        if (!sha) return { deleted: false };
+        await request(context, `${repoApiPath(context)}/contents/${encodeURIComponent(filePath)}`, {
+            method: 'DELETE',
+            json: { message, sha },
+        });
+        return { deleted: true };
+    }
+
     async function readDescriptor(context) {
         const result = await readJson(context, DESCRIPTOR_PATH);
         if (result.exists) assertTokenFreeDescriptor(result.value);
@@ -175,6 +184,7 @@ function createRepositoryPoolStore({ request }) {
     return {
         ensureCatalog,
         ensureMarker,
+        deleteJson,
         readDescriptor,
         readJson,
         syncDescriptorMirror,

@@ -19,6 +19,7 @@ const {
     selectRetentionCandidates,
 } = require('./repository-pool-maintenance');
 const {
+    DESCRIPTOR_PATH,
     MARKER_PATH,
     createRepositoryPoolStore,
 } = require('./repository-pool-github');
@@ -1760,6 +1761,35 @@ async function switchPoolLane(config, { laneId, repositoryId, expectedSegmentId 
     };
 }
 
+async function cancelPendingPoolMember(config, repositoryId) {
+    const catalogState = await ensureRepositoryReady(config);
+    const member = catalogState.poolDescriptor.members.find((candidate) => candidate.repositoryId === repositoryId);
+    if (!member || member.membershipState !== 'pending') throw buildError('只能取消 pending member。', 409);
+    const context = repositoryPool.resolveMemberContext(config, repositoryId);
+    const releases = await listReleasesForContext(config, context);
+    const payloadPresent = releases.some((release) => (
+        release.tag_name?.startsWith(RELEASE_TAG_PREFIX) || isChunkStoreRelease(release)
+    ));
+    if (payloadPresent) throw buildError('仓库已经承载备份 payload，不能取消成员。', 409);
+    const store = createPoolStore(config);
+    const [marker, mirror] = await Promise.all([
+        store.readJson(context, MARKER_PATH),
+        store.readDescriptor(context),
+    ]);
+    await store.deleteJson(context, DESCRIPTOR_PATH, mirror.sha, { message: 'Cancel Archive Reserve pool admission' });
+    await store.deleteJson(context, MARKER_PATH, marker.sha, { message: 'Cancel Archive Reserve pool admission' });
+    const catalogContext = repositoryPool.resolveMemberContext(config);
+    const cancelled = await store.updateDescriptor(catalogContext, {
+        type: 'cancel-pending-member',
+        repositoryId,
+        payloadPresent: false,
+    });
+    config.__poolConfig.repositories = config.__poolConfig.repositories.filter((candidate) => candidate.repositoryId !== repositoryId);
+    cachePoolDescriptor(config, cancelled.descriptor, cancelled.sha);
+    await saveConfig(config);
+    return { repositoryId, cancelled: true };
+}
+
 function assertBackupSource(meta, repositoryId) {
     return assertBackupRepository(meta, repositoryId);
 }
@@ -3445,6 +3475,15 @@ const plugin = {
                     repositoryId: trimToEmpty(req.body?.repositoryId),
                     expectedSegmentId: trimToEmpty(req.body?.expectedSegmentId),
                 });
+            });
+            res.json({ ok: true, result });
+        }));
+
+        router.delete('/pool/members/:repositoryId', asyncRoute(async (req, res) => {
+            const result = await withExclusiveOperation('正在取消仓库加入', async () => {
+                const config = await readConfig();
+                ensureConfigured(config);
+                return await cancelPendingPoolMember(config, trimToEmpty(req.params.repositoryId));
             });
             res.json({ ok: true, result });
         }));

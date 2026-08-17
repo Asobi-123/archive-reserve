@@ -315,7 +315,9 @@ function renderPoolMembers() {
             const stateText = member.membershipState !== 'active'
                 ? member.membershipState
                 : member.lastKnownState?.writeEligible === false ? '不可写' : member.lastKnownState?.readable === false ? '不可读' : 'active';
-            const switchButton = laneEntry && activeSegment?.repositoryId !== member.repositoryId && member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false
+            const switchButton = member.membershipState === 'pending'
+                ? `<button class="btn btn-secondary" type="button" data-action="cancel-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}">取消加入</button>`
+                : laneEntry && activeSegment?.repositoryId !== member.repositoryId && member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false
                 ? `<button class="btn btn-secondary" type="button" data-action="switch-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}" data-lane-id="${escapeHtml(laneEntry[0])}" data-segment-id="${escapeHtml(activeSegment.segmentId)}">后续备份切到这里</button>`
                 : `<span>${activeSegment?.repositoryId === member.repositoryId ? '当前分段' : (member.hasToken ? 'token 已配置' : '缺少 token')}</span>`;
             return `<div class="pool-member-row"><strong>${escapeHtml(member.repo)}</strong><span>${escapeHtml(member.repositoryId)}</span><span>${escapeHtml(stateText)}</span>${switchButton}</div>`;
@@ -325,9 +327,28 @@ function renderPoolMembers() {
 
 async function onPoolMemberListClick(event) {
     const button = event.target.closest('[data-action="switch-pool-member"]');
-    if (!button) return;
+    const cancelButton = event.target.closest('[data-action="cancel-pool-member"]');
+    if (!button && !cancelButton) return;
+    if (isBusy()) {
+        showToast(`当前正在执行：${state.currentOperation}`, 'error');
+        return;
+    }
+    if (cancelButton) {
+        if (!window.confirm('只会取消尚未承载备份 payload 的 pending member。确定取消吗？')) return;
+        try {
+            setOperation('正在取消仓库加入');
+            await apiRequest(`/pool/members/${encodeURIComponent(cancelButton.dataset.repositoryId)}`, { method: 'DELETE' });
+            await loadConfig();
+            showToast('已取消仓库加入', 'success');
+        } catch (error) {
+            state.currentOperation = '';
+            showToast(error.message || '取消仓库加入失败', 'error');
+        }
+        return;
+    }
     if (!window.confirm('切换只影响之后创建的完整备份。旧档案保留在原仓库；切换后的首份备份需要重新上传该段分块。确定继续吗？')) return;
     try {
+        setOperation('正在切换后续备份仓库');
         await apiRequest(`/pool/lanes/${encodeURIComponent(button.dataset.laneId)}/switch`, {
             method: 'POST',
             body: {
@@ -338,6 +359,7 @@ async function onPoolMemberListClick(event) {
         await loadConfig();
         showToast('后续备份仓库已切换', 'success');
     } catch (error) {
+        state.currentOperation = '';
         showToast(error.message || '切换仓库失败', 'error');
     }
 }
