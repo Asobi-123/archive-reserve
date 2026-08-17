@@ -3,7 +3,12 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 
-const { advanceCompleteScan, forgetDeletedOrphans, normalizeLedger } = require('../repository-pool-maintenance.js');
+const {
+    advanceCompleteScan,
+    forgetDeletedOrphans,
+    normalizeLedger,
+    selectRetentionCandidates,
+} = require('../repository-pool-maintenance.js');
 
 test('orphan cleanup requires two complete scans separated by grace', () => {
     const first = advanceCompleteScan(null, {
@@ -40,4 +45,17 @@ test('member ledgers are isolated and corrupt ledgers fail closed', () => {
     assert.equal(second.ledger.members['repo-a'].orphans.same.firstSeenAt, '2026-08-17T00:00:00.000Z');
     assert.equal(second.ledger.members['repo-b'].orphans.same.firstSeenAt, '2026-08-17T01:00:00.000Z');
     assert.throws(() => normalizeLedger({ version: 1, members: [] }), /Invalid/);
+});
+
+test('retention spans repositories but never crosses lanes', () => {
+    const backups = [
+        { releaseId: 3, repositoryId: 'repo-b', laneId: 'lane-a', automatic: false },
+        { releaseId: 2, repositoryId: 'repo-a', laneId: 'lane-a', automatic: false },
+        { releaseId: 1, repositoryId: 'repo-a', laneId: 'lane-other', automatic: false },
+    ];
+    assert.deepEqual(
+        selectRetentionCandidates(backups, { automatic: false, laneId: 'lane-a', keepCount: 1 })
+            .map((backup) => [backup.repositoryId, backup.releaseId]),
+        [['repo-a', 2]],
+    );
 });

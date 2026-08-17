@@ -37,4 +37,12 @@ function forgetDeletedOrphans(ledgerInput, repositoryId, keys) {
     return ledger;
 }
 
-module.exports = { advanceCompleteScan, forgetDeletedOrphans, normalizeLedger };
+function selectRetentionCandidates(backups, { automatic, laneId, keepCount, legacyMatches = () => false }) {
+    if (keepCount <= 0) return [];
+    return backups
+        .filter((backup) => Boolean(backup.automatic) === Boolean(automatic))
+        .filter((backup) => backup.laneId ? backup.laneId === laneId : legacyMatches(backup))
+        .slice(keepCount);
+}
+
+module.exports = { advanceCompleteScan, forgetDeletedOrphans, normalizeLedger, selectRetentionCandidates };

@@ -16,6 +16,7 @@ const {
     advanceCompleteScan,
     forgetDeletedOrphans,
     normalizeLedger,
+    selectRetentionCandidates,
 } = require('./repository-pool-maintenance');
 const {
     MARKER_PATH,
@@ -1564,8 +1565,8 @@ async function inspectReadableMember(config, descriptor, member) {
     };
 }
 
-async function listPoolBackups(config) {
-    const snapshot = await readPoolDescriptorSnapshot(config);
+async function listPoolBackups(config, { allowStale = true, requireComplete = false } = {}) {
+    const snapshot = await readPoolDescriptorSnapshot(config, { allowStale });
     const activeMembers = snapshot.descriptor.members.filter((member) => member.membershipState === 'active');
     const settled = await Promise.all(activeMembers.map(async (member) => {
         try {
@@ -1585,10 +1586,14 @@ async function listPoolBackups(config) {
         }
     }));
     await saveConfig(config);
-    return aggregateMemberBackupResults(settled, {
+    const result = aggregateMemberBackupResults(settled, {
         descriptorStale: snapshot.stale,
         descriptorError: snapshot.error,
     });
+    if (requireComplete && (result.partial || result.freshness.stale)) {
+        throw buildError('仓库池扫描不完整，已停止保留清理。', 409);
+    }
+    return result;
 }
 
 async function resolveBackupSourceConfig(config, repositoryId, { allowStale = true } = {}) {
@@ -2833,25 +2838,17 @@ async function runBackupJob(config, options = {}) {
         await saveConfig(config);
 
         if (!options.automatic) {
-            await pruneManualBackups(targetConfig);
+            await prunePoolBackups(config, {
+                automatic: false,
+                keepCount: normalizeManualBackupKeepCount(config.manualBackupKeepCount),
+                reservation: target.reservation,
+            });
         }
 
         return summarizeBackupForResponse(release.id, tagName, summary, release.published_at || createdAt);
     } finally {
         await removeDirectorySafe(tempDir);
     }
-}
-
-async function listBackupReleases(config) {
-    const releases = await listAllReleases(config);
-    return releases
-        .map(backupFromRelease)
-        .filter(Boolean)
-        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-}
-
-async function deleteBackupRelease(config, backup) {
-    await deleteRelease(config, backup.releaseId, backup.tagName);
 }
 
 async function collectReferencedChunkAssetNames(config, backups) {
@@ -3087,74 +3084,24 @@ function isMatchingBackupForRetention(backup, config) {
     return normalizeDeviceIdentityValue(backup.device.name) === normalizeDeviceIdentityValue(config.deviceName);
 }
 
-async function pruneBackups(config, { automatic, keepCount, reserveSlot = 0 }) {
-    if (keepCount <= 0 && reserveSlot <= 0) {
-        return {
-            keepCount,
-            reserveSlot,
-            deletedCount: 0,
-            gcDeletedCount: 0,
-            gcProtectedCount: 0,
-        };
-    }
-
-    const effectiveKeepCount = Math.max(0, keepCount - reserveSlot);
-    const backups = (await listBackupReleases(config))
-        .filter((backup) => backup.automatic === automatic)
-        .filter((backup) => isMatchingBackupForRetention(backup, config));
-
-    const staleBackups = backups.slice(effectiveKeepCount);
-    for (const backup of staleBackups) {
-        await deleteBackupRelease(config, backup);
-    }
-
-    const gcResult = { deletedCount: 0 };
-
-    return {
-        keepCount,
-        reserveSlot,
-        deletedCount: staleBackups.length,
-        gcDeletedCount: gcResult.deletedCount,
-        gcProtectedCount: gcResult.protectedCount,
-    };
-}
-
-async function pruneAutoBackups(config) {
-    const keepCount = normalizeAutoBackupKeepCount(config.autoBackupKeepCount);
-    return await pruneBackups(config, {
-        automatic: true,
-        keepCount,
-    });
-}
-
-async function pruneManualBackups(config) {
-    const keepCount = normalizeManualBackupKeepCount(config.manualBackupKeepCount);
-    return await pruneBackups(config, {
-        automatic: false,
-        keepCount,
-    });
-}
-
-async function pruneIncomingBackupSlot(config, automatic) {
-    const keepCount = automatic
-        ? normalizeAutoBackupKeepCount(config.autoBackupKeepCount)
-        : normalizeManualBackupKeepCount(config.manualBackupKeepCount);
-
-    if (keepCount <= 0) {
-        return {
-            keepCount,
-            reserveSlot: 1,
-            deletedCount: 0,
-            gcDeletedCount: 0,
-            gcProtectedCount: 0,
-        };
-    }
-
-    return await pruneBackups(config, {
+async function prunePoolBackups(config, { automatic, keepCount, reservation }) {
+    if (keepCount <= 0) return { keepCount, deletedCount: 0, gcDeletedCount: 0, gcProtectedCount: 0 };
+    const pool = await listPoolBackups(config, { allowStale: false, requireComplete: true });
+    const staleBackups = selectRetentionCandidates(pool.backups, {
         automatic,
+        laneId: reservation.laneId,
         keepCount,
-        reserveSlot: 1,
+        legacyMatches: (backup) => isMatchingBackupForRetention(backup, config),
     });
+    for (const backup of staleBackups) {
+        const source = await resolveBackupSourceConfig(config, backup.repositoryId, { allowStale: false });
+        try {
+            await deleteRelease(source.config, backup.releaseId, backup.tagName);
+        } catch (error) {
+            if (error.statusCode !== 404) throw error;
+        }
+    }
+    return { keepCount, deletedCount: staleBackups.length, gcDeletedCount: 0, gcProtectedCount: 0 };
 }
 
 async function scheduleAutoBackup(config) {
@@ -3181,13 +3128,18 @@ async function scheduleAutoBackup(config) {
                     message: '跳过：当前已有任务在执行',
                 };
             } else if (latestConfig.autoBackupEnabled) {
+                let backup;
                 await withExclusiveOperation('正在执行自动备份', async () => {
-                    await runBackupJob(latestConfig, {
+                    backup = await runBackupJob(latestConfig, {
                         note: '[自动备份]',
                         automatic: true,
                     });
                 });
-                const pruneResult = await pruneAutoBackups(latestConfig);
+                const pruneResult = await prunePoolBackups(latestConfig, {
+                    automatic: true,
+                    keepCount: normalizeAutoBackupKeepCount(latestConfig.autoBackupKeepCount),
+                    reservation: backup,
+                });
                 lastAutoBackupResult = {
                     ok: true,
                     at: new Date().toISOString(),
