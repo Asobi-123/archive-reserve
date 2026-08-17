@@ -317,7 +317,7 @@ function renderPoolMembers() {
                 : member.lastKnownState?.writeEligible === false ? '不可写' : member.lastKnownState?.readable === false ? '不可读' : 'active';
             const switchButton = member.membershipState === 'pending'
                 ? `<button class="btn btn-secondary" type="button" data-action="cancel-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}">取消加入</button>`
-                : laneEntry && activeSegment?.repositoryId !== member.repositoryId && member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false
+                : laneEntry && !state.pool?.freshness?.stale && activeSegment?.repositoryId !== member.repositoryId && member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false
                 ? `<button class="btn btn-secondary" type="button" data-action="switch-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}" data-lane-id="${escapeHtml(laneEntry[0])}" data-segment-id="${escapeHtml(activeSegment.segmentId)}">后续备份切到这里</button>`
                 : `<span>${activeSegment?.repositoryId === member.repositoryId ? '当前分段' : (member.hasToken ? 'token 已配置' : '缺少 token')}</span>`;
             return `<div class="pool-member-row"><strong>${escapeHtml(member.repo)}</strong><span>${escapeHtml(member.repositoryId)}</span><span>${escapeHtml(stateText)}</span>${switchButton}</div>`;
