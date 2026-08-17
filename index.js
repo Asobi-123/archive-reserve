@@ -13,6 +13,11 @@ const repositoryPool = require('./repository-pool');
 const { aggregateMemberBackupResults, assertBackupRepository } = require('./repository-pool-routing');
 const { assertStagingComplete, collectRequiredDirectories } = require('./repository-pool-restore');
 const {
+    advanceCompleteScan,
+    forgetDeletedOrphans,
+    normalizeLedger,
+} = require('./repository-pool-maintenance');
+const {
     MARKER_PATH,
     createRepositoryPoolStore,
 } = require('./repository-pool-github');
@@ -30,6 +35,7 @@ const DEFAULT_USER_DATA_DIR = path.join(DATA_ROOT_DIR, 'default-user');
 const DEFAULT_BACKUP_ROOT = fs.existsSync(DEFAULT_USER_DATA_DIR) ? 'default-user' : '';
 const STORAGE_DIR = path.join(DATA_ROOT_DIR, '.archive-reserve');
 const CONFIG_PATH = path.join(STORAGE_DIR, 'config.json');
+const ORPHAN_LEDGER_PATH = path.join(STORAGE_DIR, 'orphan-ledger.json');
 const LEGACY_STORAGE_CONFIG_PATH = path.join(DATA_ROOT_DIR, '_storage', info.id, 'config.json');
 const LEGACY_CONFIG_PATH = path.join(__dirname, 'config.json');
 const META_ASSET_NAME = 'archive-reserve.meta.json';
@@ -2978,36 +2984,91 @@ async function runBackupHealthCheck(config, releaseId, repositoryId = '') {
     };
 }
 
-async function pruneChunkStoreAssets(config) {
-    const storeReleases = await listChunkStoreReleases(config);
-    if (storeReleases.length === 0) {
-        return {
-            deletedCount: 0,
-            deletedBytes: 0,
-            protectedCount: 0,
-            protectedBytes: 0,
-        };
+async function scanMemberMaintenance(config) {
+    const releases = await listAllReleases(config);
+    const backups = releases.map(backupFromRelease).filter(Boolean);
+    const storeReleases = releases.filter(isChunkStoreRelease);
+    const byId = new Map(storeReleases.map((release) => [String(release.id), release]));
+    const byTag = new Map(storeReleases.map((release) => [release.tag_name, release]));
+    const referenced = new Set();
+    for (const backup of backups) {
+        const release = releases.find((candidate) => Number(candidate.id) === Number(backup.releaseId));
+        if (!release) throw buildError(`备份 release ${backup.releaseId} 在完整扫描期间消失。`, 409);
+        const meta = await getBackupMeta(config, release);
+        for (const chunk of meta.chunks || []) {
+            const storeReleaseId = chunk.store?.releaseId || meta.chunkStore?.releaseId;
+            const storeTagName = chunk.store?.tagName || meta.chunkStore?.tagName || CHUNK_STORE_TAG;
+            const store = byId.get(String(storeReleaseId)) || byTag.get(storeTagName);
+            if (!store) throw buildError(`备份 ${backup.releaseId} 引用的分块仓库不存在。`, 409);
+            for (const part of chunk.parts || []) referenced.add(`${store.id}:${part.name}`);
+        }
     }
-    const backups = await listBackupReleases(config);
-    const referencedAssetNames = await collectReferencedChunkAssetNames(config, backups);
-    const orphanAssets = storeReleases.flatMap((release) => (
-        (release.assets || [])
-            .filter((asset) => !referencedAssetNames.get(release.tag_name)?.has(asset.name))
-            .map((asset) => ({ ...asset, releaseTag: release.tag_name }))
-    ));
-    const protectedAssets = orphanAssets.filter(isChunkAssetGraceProtected);
-    const reclaimableAssets = orphanAssets.filter((asset) => !isChunkAssetGraceProtected(asset));
-
-    for (const asset of reclaimableAssets) {
-        await deleteReleaseAsset(config, asset.id);
-    }
-
+    const assets = storeReleases.flatMap((release) => (release.assets || [])
+        .filter((asset) => trimToEmpty(asset.name).startsWith(CHUNK_ASSET_PREFIX))
+        .map((asset) => ({
+            key: `${release.id}:${asset.id}`,
+            referenceKey: `${release.id}:${asset.name}`,
+            repositoryId: config.__memberContext?.repositoryId || repositoryPool.resolveMemberContext(config).repositoryId,
+            asset,
+            releaseTag: release.tag_name,
+        })));
     return {
-        deletedCount: reclaimableAssets.length,
-        deletedBytes: reclaimableAssets.reduce((sum, asset) => sum + (Number(asset.size) || 0), 0),
-        protectedCount: protectedAssets.length,
-        protectedBytes: protectedAssets.reduce((sum, asset) => sum + (Number(asset.size) || 0), 0),
+        repositoryId: config.__memberContext?.repositoryId || repositoryPool.resolveMemberContext(config).repositoryId,
+        orphanAssets: assets.filter((asset) => !referenced.has(asset.referenceKey)),
     };
+}
+
+async function readOrphanLedger() {
+    try {
+        return normalizeLedger(JSON.parse(await fsp.readFile(ORPHAN_LEDGER_PATH, 'utf8')));
+    } catch (error) {
+        if (error.code === 'ENOENT') return normalizeLedger(null);
+        throw error;
+    }
+}
+
+async function runPoolGarbageCollection(config) {
+    const snapshot = await readPoolDescriptorSnapshot(config, { allowStale: false });
+    const activeMembers = snapshot.descriptor.members.filter((member) => member.membershipState === 'active');
+    const scans = await Promise.all(activeMembers.map(async (member) => {
+        const bound = repositoryPool.bindRuntimeConfigToMember(config, member.repositoryId);
+        return await scanMemberMaintenance(bound);
+    }));
+    let ledger = await readOrphanLedger();
+    const scannedAt = new Date().toISOString();
+    const eligible = [];
+    for (const scan of scans) {
+        const advanced = advanceCompleteScan(ledger, {
+            repositoryId: scan.repositoryId,
+            orphanKeys: scan.orphanAssets.map((asset) => asset.key),
+            scannedAt,
+            graceMs: CHUNK_GC_GRACE_MS,
+        });
+        ledger = advanced.ledger;
+        const eligibleSet = new Set(advanced.eligibleKeys);
+        eligible.push(...scan.orphanAssets.filter((asset) => eligibleSet.has(asset.key)));
+    }
+    await repositoryPool.writeJsonAtomically(ORPHAN_LEDGER_PATH, ledger);
+    let deletedCount = 0;
+    let deletedBytes = 0;
+    for (const candidate of eligible) {
+        const bound = repositoryPool.bindRuntimeConfigToMember(config, candidate.repositoryId);
+        try {
+            await deleteReleaseAsset(bound, candidate.asset.id);
+        } catch (error) {
+            if (error.statusCode !== 404) throw error;
+        }
+        deletedCount += 1;
+        deletedBytes += Number(candidate.asset.size) || 0;
+    }
+    if (eligible.length > 0) {
+        for (const scan of scans) {
+            const keys = new Set(eligible.filter((asset) => asset.repositoryId === scan.repositoryId).map((asset) => asset.key));
+            ledger = forgetDeletedOrphans(ledger, scan.repositoryId, keys);
+        }
+        await repositoryPool.writeJsonAtomically(ORPHAN_LEDGER_PATH, ledger);
+    }
+    return { deletedCount, deletedBytes, protectedCount: scans.reduce((sum, scan) => sum + scan.orphanAssets.length, 0) - deletedCount };
 }
 
 function isMatchingBackupForRetention(backup, config) {
@@ -3047,9 +3108,7 @@ async function pruneBackups(config, { automatic, keepCount, reserveSlot = 0 }) {
         await deleteBackupRelease(config, backup);
     }
 
-    const gcResult = staleBackups.length > 0
-        ? await pruneChunkStoreAssets(config)
-        : { deletedCount: 0 };
+    const gcResult = { deletedCount: 0 };
 
     return {
         keepCount,
@@ -3214,7 +3273,7 @@ const plugin = {
             const result = await withExclusiveOperation('正在回收空间', async () => {
                 const config = await readConfig();
                 ensureConfigured(config);
-                return await pruneChunkStoreAssets(config);
+                return await runPoolGarbageCollection(config);
             });
 
             res.json({
@@ -3506,7 +3565,6 @@ const plugin = {
                 const releaseId = parseReleaseId(req.params.releaseId);
                 const release = await getRelease(config, releaseId);
                 await deleteRelease(config, releaseId, release.tag_name);
-                await pruneChunkStoreAssets(config);
             });
 
             res.json({
