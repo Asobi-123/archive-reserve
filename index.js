@@ -2851,43 +2851,6 @@ async function runBackupJob(config, options = {}) {
     }
 }
 
-async function collectReferencedChunkAssetNames(config, backups) {
-    const referenced = new Map();
-
-    for (const backup of backups) {
-        try {
-            const release = await getRelease(config, backup.releaseId);
-            const meta = await getBackupMeta(config, release);
-            for (const chunk of meta.chunks || []) {
-                const storeKey = chunk.store?.tagName
-                    || (chunk.store?.releaseId ? `id:${chunk.store.releaseId}` : '')
-                    || meta.chunkStore?.tagName
-                    || (meta.chunkStore?.releaseId ? `id:${meta.chunkStore.releaseId}` : '')
-                    || CHUNK_STORE_TAG;
-                if (!referenced.has(storeKey)) {
-                    referenced.set(storeKey, new Set());
-                }
-                const names = referenced.get(storeKey);
-                for (const part of chunk.parts || []) {
-                    names.add(part.name);
-                }
-            }
-        } catch (error) {
-            console.warn('[archive-reserve] 读取备份索引用于分块回收失败：', backup.tagName, error.message);
-        }
-    }
-
-    return referenced;
-}
-
-function isChunkAssetGraceProtected(asset) {
-    const timestamp = Date.parse(asset?.updated_at || asset?.created_at || '');
-    if (!Number.isFinite(timestamp)) {
-        return false;
-    }
-    return timestamp >= (Date.now() - CHUNK_GC_GRACE_MS);
-}
-
 function summarizeChunkAssets(assets) {
     return assets.reduce((summary, asset) => {
         summary.count += 1;
@@ -2897,28 +2860,38 @@ function summarizeChunkAssets(assets) {
 }
 
 async function getSpaceStats(config) {
-    const releases = await listAllReleases(config);
-    const backups = releases
-        .map(backupFromRelease)
-        .filter(Boolean)
-        .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
-
-    const storeReleases = await listChunkStoreReleases(config);
-    const referencedAssetNames = await collectReferencedChunkAssetNames(config, backups);
-    const storeAssets = storeReleases.flatMap((release) => (release.assets || []).map((asset) => ({
-        ...asset,
-        releaseTag: release.tag_name,
-    })));
-    const referencedAssets = storeAssets.filter((asset) => referencedAssetNames.get(asset.releaseTag)?.has(asset.name));
-    const orphanAssets = storeAssets.filter((asset) => !referencedAssetNames.get(asset.releaseTag)?.has(asset.name));
-    const protectedAssets = orphanAssets.filter(isChunkAssetGraceProtected);
-    const reclaimableAssets = orphanAssets.filter((asset) => !isChunkAssetGraceProtected(asset));
-    const backupAssetBytes = releases.reduce((sum, release) => {
-        if (!release.tag_name || !release.tag_name.startsWith(RELEASE_TAG_PREFIX)) {
-            return sum;
+    const snapshot = await readPoolDescriptorSnapshot(config);
+    const activeMembers = snapshot.descriptor.members.filter((member) => member.membershipState === 'active');
+    const memberResults = await Promise.all(activeMembers.map(async (member) => {
+        try {
+            const bound = repositoryPool.bindRuntimeConfigToMember(config, member.repositoryId);
+            return { ok: true, ...(await scanMemberMaintenance(bound)) };
+        } catch (error) {
+            return { ok: false, repositoryId: member.repositoryId, repo: member.repo, error: error.message };
         }
-        return sum + (release.assets || []).reduce((inner, asset) => inner + (Number(asset.size) || 0), 0);
-    }, 0);
+    }));
+    let ledger = null;
+    let ledgerError = null;
+    try {
+        ledger = await readOrphanLedger();
+    } catch (error) {
+        ledgerError = error;
+    }
+    const complete = !snapshot.stale && !ledgerError && memberResults.every((member) => member.ok);
+    const successful = memberResults.filter((member) => member.ok);
+    const backups = successful.flatMap((member) => member.backups);
+    const storeAssets = successful.flatMap((member) => member.assets);
+    const referencedAssets = successful.flatMap((member) => member.referencedAssets);
+    const orphanAssets = successful.flatMap((member) => member.orphanAssets);
+    const now = Date.now();
+    const reclaimableAssets = complete ? orphanAssets.filter((asset) => {
+        const firstSeenAt = ledger.members[asset.repositoryId]?.orphans?.[asset.key]?.firstSeenAt;
+        return firstSeenAt && now - Date.parse(firstSeenAt) >= CHUNK_GC_GRACE_MS;
+    }) : [];
+    const reclaimableKeys = new Set(reclaimableAssets.map((asset) => `${asset.repositoryId}:${asset.key}`));
+    const protectedAssets = orphanAssets.filter((asset) => !reclaimableKeys.has(`${asset.repositoryId}:${asset.key}`));
+    const backupAssetBytes = successful.reduce((sum, member) => sum + member.backupAssetBytes, 0);
+    const storeReleaseCount = successful.reduce((sum, member) => sum + member.storeReleaseCount, 0);
 
     return {
         backups: {
@@ -2928,15 +2901,22 @@ async function getSpaceStats(config) {
             metaBytes: backupAssetBytes,
         },
         chunkStore: {
-            exists: storeReleases.length > 0,
-            releaseId: storeReleases[0]?.id || 0,
-            releaseCount: storeReleases.length,
+            exists: storeReleaseCount > 0,
+            releaseId: successful.find((member) => member.firstStoreReleaseId)?.firstStoreReleaseId || 0,
+            releaseCount: storeReleaseCount,
             total: summarizeChunkAssets(storeAssets),
             referenced: summarizeChunkAssets(referencedAssets),
             protected: summarizeChunkAssets(protectedAssets),
             reclaimable: summarizeChunkAssets(reclaimableAssets),
         },
         gcGraceHours: Math.round(CHUNK_GC_GRACE_MS / (60 * 60 * 1000)),
+        complete,
+        members: memberResults.map((member) => ({
+            repositoryId: member.repositoryId,
+            complete: member.ok,
+            error: member.error || null,
+        })),
+        freshness: { stale: snapshot.stale, error: snapshot.error?.message || ledgerError?.message || null },
         checkedAt: new Date().toISOString(),
     };
 }
@@ -3003,6 +2983,7 @@ async function scanMemberMaintenance(config) {
     const assets = storeReleases.flatMap((release) => (release.assets || [])
         .filter((asset) => trimToEmpty(asset.name).startsWith(CHUNK_ASSET_PREFIX))
         .map((asset) => ({
+            ...asset,
             key: `${release.id}:${asset.id}`,
             referenceKey: `${release.id}:${asset.name}`,
             repositoryId: config.__memberContext?.repositoryId || repositoryPool.resolveMemberContext(config).repositoryId,
@@ -3011,7 +2992,17 @@ async function scanMemberMaintenance(config) {
         })));
     return {
         repositoryId: config.__memberContext?.repositoryId || repositoryPool.resolveMemberContext(config).repositoryId,
+        backups,
+        assets,
+        referencedAssets: assets.filter((asset) => referenced.has(asset.referenceKey)),
         orphanAssets: assets.filter((asset) => !referenced.has(asset.referenceKey)),
+        backupAssetBytes: releases.reduce((sum, release) => (
+            release.tag_name?.startsWith(RELEASE_TAG_PREFIX)
+                ? sum + (release.assets || []).reduce((inner, asset) => inner + (Number(asset.size) || 0), 0)
+                : sum
+        ), 0),
+        storeReleaseCount: storeReleases.length,
+        firstStoreReleaseId: storeReleases[0]?.id || 0,
     };
 }
 
