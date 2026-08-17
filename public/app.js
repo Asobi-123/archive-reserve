@@ -8,6 +8,8 @@ const state = {
     backupsLoaded: false,
     backupsLoading: false,
     backupsError: '',
+    poolReadState: null,
+    pool: null,
     configured: false,
     currentOperation: '',
     currentProgress: null,
@@ -62,10 +64,16 @@ function cacheElements() {
     elements.themeButtons = Array.from(document.querySelectorAll('.theme-btn'));
     elements.autoBackupStatus = document.getElementById('auto-backup-status');
     elements.tokenHint = document.getElementById('token-hint');
+    elements.poolMemberList = document.getElementById('pool-member-list');
+    elements.poolMemberRepoInput = document.getElementById('pool-member-repo-input');
+    elements.poolMemberTokenInput = document.getElementById('pool-member-token-input');
+    elements.addPoolMemberButton = document.getElementById('add-pool-member-btn');
     elements.backupRootHint = document.getElementById('backup-root-hint');
     elements.backupForm = document.getElementById('backup-form');
     elements.backupNameInput = document.getElementById('backup-name-input');
     elements.backupNoteInput = document.getElementById('backup-note-input');
+    elements.backupRepositoryField = document.getElementById('backup-repository-field');
+    elements.backupRepositoryInput = document.getElementById('backup-repository-input');
     elements.backupList = document.getElementById('backup-list');
     elements.backupSearchInput = document.getElementById('backup-search-input');
     elements.backupSearchMeta = document.getElementById('backup-search-meta');
@@ -93,6 +101,8 @@ function cacheElements() {
 
 function bindEvents() {
     elements.configForm.addEventListener('submit', onSaveConfig);
+    elements.addPoolMemberButton.addEventListener('click', () => { void onAddPoolMember(); });
+    elements.poolMemberList.addEventListener('click', (event) => { void onPoolMemberListClick(event); });
     elements.backupForm.addEventListener('submit', onCreateBackup);
     elements.refreshButton.addEventListener('click', () => {
         void refreshBackupsWithFeedback();
@@ -291,6 +301,79 @@ function renderAutoBackupStatus() {
         ? `上次结果：${formatDate(autoBackup.lastResult.at)} ${autoBackup.lastResult.message || ''}`.trim()
         : '还没有自动备份记录';
     elements.autoBackupStatus.textContent = `当前间隔：每 ${hours} 小时；自动档案保留 ${keepCount} 个；手动档案保留 ${manualKeepCount || '不限'}；${nextRunText}；${lastResultText}`;
+}
+
+function renderPoolMembers() {
+    const members = state.config?.repositories || [];
+    const laneEntry = Object.entries(state.pool?.backupLanes || {}).find(([, lane]) => (
+        lane.identity?.backupRoot === (state.config?.backupRoot || '')
+        && (lane.identity?.deviceId === state.config?.deviceId || lane.identity?.deviceIdAliases?.includes(state.config?.deviceId))
+    ));
+    const activeSegment = laneEntry?.[1]?.segments?.at(-1) || null;
+    elements.poolMemberList.innerHTML = members.length
+        ? members.map((member) => {
+            const stateText = member.membershipState !== 'active'
+                ? member.membershipState
+                : member.lastKnownState?.writeEligible === false ? '不可写' : member.lastKnownState?.readable === false ? '不可读' : 'active';
+            const switchButton = laneEntry && activeSegment?.repositoryId !== member.repositoryId && member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false
+                ? `<button class="btn btn-secondary" type="button" data-action="switch-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}" data-lane-id="${escapeHtml(laneEntry[0])}" data-segment-id="${escapeHtml(activeSegment.segmentId)}">后续备份切到这里</button>`
+                : `<span>${activeSegment?.repositoryId === member.repositoryId ? '当前分段' : (member.hasToken ? 'token 已配置' : '缺少 token')}</span>`;
+            return `<div class="pool-member-row"><strong>${escapeHtml(member.repo)}</strong><span>${escapeHtml(member.repositoryId)}</span><span>${escapeHtml(stateText)}</span>${switchButton}</div>`;
+        }).join('')
+        : '<p class="field-hint">尚未初始化仓库池。</p>';
+}
+
+async function onPoolMemberListClick(event) {
+    const button = event.target.closest('[data-action="switch-pool-member"]');
+    if (!button) return;
+    if (!window.confirm('切换只影响之后创建的完整备份。旧档案保留在原仓库；切换后的首份备份需要重新上传该段分块。确定继续吗？')) return;
+    try {
+        await apiRequest(`/pool/lanes/${encodeURIComponent(button.dataset.laneId)}/switch`, {
+            method: 'POST',
+            body: {
+                repositoryId: button.dataset.repositoryId,
+                expectedSegmentId: button.dataset.segmentId,
+            },
+        });
+        await loadConfig();
+        showToast('后续备份仓库已切换', 'success');
+    } catch (error) {
+        showToast(error.message || '切换仓库失败', 'error');
+    }
+}
+
+function renderBackupRepositoryOptions() {
+    const members = (state.config?.repositories || []).filter((member) => (
+        member.membershipState === 'active' && member.lastKnownState?.writeEligible !== false && member.hasToken
+    ));
+    elements.backupRepositoryField.classList.toggle('hidden', members.length <= 1);
+    elements.backupRepositoryInput.innerHTML = members.map((member) => (
+        `<option value="${escapeHtml(member.repositoryId)}">${escapeHtml(member.repo)}</option>`
+    )).join('');
+}
+
+async function onAddPoolMember() {
+    if (isBusy()) {
+        showToast(`当前正在执行：${state.currentOperation}`, 'error');
+        return;
+    }
+    const repo = elements.poolMemberRepoInput.value.trim();
+    const token = elements.poolMemberTokenInput.value.trim();
+    if (!repo) {
+        showToast('请填写要加入的仓库。', 'error');
+        return;
+    }
+    try {
+        setOperation('正在加入仓库池');
+        await apiRequest('/pool/members', { method: 'POST', body: { repo, token } });
+        elements.poolMemberRepoInput.value = '';
+        elements.poolMemberTokenInput.value = '';
+        await loadConfig();
+        showToast('仓库已加入仓库池', 'success');
+    } catch (error) {
+        state.currentOperation = '';
+        showToast(error.message || '加入仓库池失败', 'error');
+    }
 }
 
 function showToast(message, type = 'default') {
@@ -527,6 +610,8 @@ async function loadConfig() {
     state.backupsLoaded = false;
     state.backupsLoading = false;
     state.backupsError = '';
+    state.poolReadState = null;
+    state.pool = null;
     state.spaceStats = null;
     state.spaceStatsState = 'idle';
     state.spaceStatsError = '';
@@ -545,7 +630,16 @@ async function loadConfig() {
     elements.backupRootHint.textContent = state.backupRootLabel
         ? `当前备份根目录：${state.backupRootLabel}。自动排除 .gitkeep / .DS_Store；扩展目录的 .git 会一并保留。`
         : '';
+    if (state.configured) {
+        try {
+            state.pool = await apiRequest('/pool');
+        } catch (error) {
+            state.pool = { backupLanes: {}, freshness: { stale: true, error: error.message } };
+        }
+    }
     renderAutoBackupStatus();
+    renderPoolMembers();
+    renderBackupRepositoryOptions();
 
     if (state.currentOperation) {
         setStatus(state.currentOperation, true);
@@ -581,6 +675,16 @@ async function loadBackups() {
     try {
         const result = await apiRequest('/backups');
         state.backups = result.backups || [];
+        state.poolReadState = { partial: Boolean(result.partial), freshness: result.freshness || null };
+        if (state.config?.repositories && Array.isArray(result.members)) {
+            const memberState = new Map(result.members.map((member) => [member.repositoryId, member]));
+            state.config.repositories = state.config.repositories.map((member) => ({
+                ...member,
+                ...(memberState.get(member.repositoryId) || {}),
+            }));
+            renderPoolMembers();
+            renderBackupRepositoryOptions();
+        }
         state.configured = Boolean(result.configured);
         state.currentOperation = result.currentOperation || '';
         state.currentProgress = result.progress || null;
@@ -709,13 +813,17 @@ function renderBackupList() {
         return;
     }
 
-    elements.backupList.innerHTML = visibleBackups.map((backup) => `
+    const poolNotice = state.poolReadState?.partial || state.poolReadState?.freshness?.stale
+        ? '<div class="empty-state">部分仓库当前不可用，或目录缓存已过期；下方只显示本次成功读取的档案。</div>'
+        : '';
+    elements.backupList.innerHTML = poolNotice + visibleBackups.map((backup) => `
         <article class="backup-card">
             <div class="backup-main">
                 <h3>${escapeHtml(backup.name)}</h3>
                 <p class="backup-note">${escapeHtml(backup.note || '无备注')}</p>
                 <div class="backup-meta">
                     <span class="meta-chip">设备：${escapeHtml(backup.device.name)}</span>
+                    <span class="meta-chip">来源：${escapeHtml(backup.source?.repo || backup.repositoryId || '旧版单仓')}</span>
                     <span class="meta-chip">目录：${escapeHtml(formatBackupRootLabel(backup))}</span>
                     <span class="meta-chip">时间：${escapeHtml(formatDate(backup.createdAt))}</span>
                     <span class="meta-chip">体积：${escapeHtml(formatBytes(backup.archive.totalBytes))}</span>
@@ -924,6 +1032,7 @@ async function onCreateBackup(event) {
             body: {
                 name: elements.backupNameInput.value,
                 note: elements.backupNoteInput.value,
+                repositoryId: elements.backupRepositoryInput.value || '',
             },
         });
 

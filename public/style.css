@@ -1418,3 +1418,26 @@ select:focus {
         justify-self: end;
     }
 }
+.pool-member-list {
+    display: grid;
+    gap: 8px;
+}
+
+.pool-member-row,
+.pool-member-add-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) auto auto;
+    gap: 8px;
+    align-items: center;
+}
+
+.pool-member-add-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+@media (max-width: 720px) {
+    .pool-member-row,
+    .pool-member-add-row {
+        grid-template-columns: 1fr;
+    }
+}

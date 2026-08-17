@@ -53,6 +53,16 @@
                         <input id="token-input" name="token" type="password" placeholder="留空则保留已保存的 token">
                         <small id="token-hint" class="field-hint"></small>
                     </label>
+                    <div class="field field-wide pool-members-field">
+                        <span>仓库池成员</span>
+                        <div id="pool-member-list" class="pool-member-list"></div>
+                        <div class="pool-member-add-row">
+                            <input id="pool-member-repo-input" type="text" placeholder="owner/second-repository">
+                            <input id="pool-member-token-input" type="password" placeholder="该仓库 token">
+                            <button id="add-pool-member-btn" class="btn btn-secondary" type="button">加入仓库池</button>
+                        </div>
+                        <small class="field-hint">加入前会校验 GitHub 仓库身份；已有 Archive Reserve 内容的仓库不会自动采纳。</small>
+                    </div>
                     <label class="field">
                         <span>当前设备名</span>
                         <input id="device-name-input" name="deviceName" type="text" placeholder="例如 MacBook-Air">
@@ -140,6 +150,11 @@
                 </div>
                 <p id="backup-root-hint" class="panel-hint"></p>
                 <form id="backup-form" class="form-grid">
+                    <label id="backup-repository-field" class="field hidden">
+                        <span>新备份仓库</span>
+                        <select id="backup-repository-input"></select>
+                        <small class="field-hint">只有创建新的备份序列时使用；已有序列继续沿用当前活动分段。</small>
+                    </label>
                     <label class="field">
                         <span>备份名</span>
                         <input id="backup-name-input" name="name" type="text" placeholder="不填就自动生成时间名">
