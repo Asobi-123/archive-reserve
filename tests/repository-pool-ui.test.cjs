@@ -8,6 +8,7 @@ const test = require('node:test');
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 const app = fs.readFileSync(path.join(root, 'public', 'app.js'), 'utf8');
+const server = fs.readFileSync(path.join(root, 'index.js'), 'utf8');
 
 test('pool UI exposes member admission and explicit backup placement', () => {
     assert.match(html, /id="pool-member-repo-input"/);
@@ -17,6 +18,8 @@ test('pool UI exposes member admission and explicit backup placement', () => {
     assert.match(html, /id="backup-repository-input"/);
     assert.match(app, /apiRequest\('\/pool\/members'/);
     assert.match(app, /configPayload\(\{ repo, token \}\)/);
+    assert.match(app, /\/credentials`/);
+    assert.match(server, /router\.patch\('\/pool\/members\/:repositoryId\/credentials'/);
     assert.match(app, /repositoryId: elements\.backupRepositoryInput\.value/);
     assert.match(app, /normalizeRepositoryInput/);
     assert.doesNotMatch(app, /成员仓库<\/span>/);

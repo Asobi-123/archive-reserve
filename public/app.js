@@ -10,6 +10,7 @@ const state = {
     backupsError: '',
     poolReadState: null,
     pool: null,
+    editingRepositoryId: '',
     configured: false,
     currentOperation: '',
     currentProgress: null,
@@ -328,7 +329,7 @@ function renderPoolMembers() {
                         : member.lastKnownState?.readable === false ? '不可读' : '可用';
             const action = member.membershipState === 'pending'
                 ? `<button class="btn btn-secondary" type="button" data-action="cancel-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}">取消加入</button>`
-                : '';
+                : `<button class="pool-member-edit" type="button" data-action="edit-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}" aria-label="更新 ${escapeHtml(member.repo)} 的凭据" title="更新凭据">✎</button>`;
             const catalogBadge = member.repositoryId === state.config?.catalogRepositoryId
                 ? '<span class="pool-member-badge">目录仓库</span>'
                 : '';
@@ -353,6 +354,11 @@ function renderPoolMembers() {
 }
 
 async function onPoolMemberListClick(event) {
+    const editButton = event.target.closest('[data-action="edit-pool-member"]');
+    if (editButton) {
+        openPoolMemberEditor(editButton.dataset.repositoryId);
+        return;
+    }
     const cancelButton = event.target.closest('[data-action="cancel-pool-member"]');
     if (!cancelButton) return;
     if (isBusy()) {
@@ -425,25 +431,31 @@ function normalizeRepositoryInput(input) {
     return input.value.trim();
 }
 
-function openPoolMemberEditor() {
+function openPoolMemberEditor(repositoryId = '') {
+    const member = (state.config?.repositories || []).find((candidate) => candidate.repositoryId === repositoryId);
+    state.editingRepositoryId = member?.repositoryId || '';
     elements.poolMemberEditor.classList.remove('hidden');
     elements.addPoolMemberButton.classList.add('hidden');
-    elements.poolMemberEditorTitle.textContent = state.configured ? '添加仓库' : '添加第一个仓库';
-    elements.poolMemberTokenLabel.textContent = state.configured ? '该仓库 Token（可选）' : 'GitHub Token';
-    elements.poolMemberTokenInput.placeholder = state.configured
+    elements.poolMemberEditorTitle.textContent = member ? '更新仓库凭据' : state.configured ? '添加仓库' : '添加第一个仓库';
+    elements.poolMemberRepoInput.value = member?.repo || '';
+    elements.poolMemberRepoInput.readOnly = Boolean(member);
+    elements.poolMemberTokenLabel.textContent = state.configured && !member ? '该仓库 Token（可选）' : 'GitHub Token';
+    elements.poolMemberTokenInput.placeholder = state.configured && !member
         ? '留空则沿用第一个仓库的 token'
         : '填写可访问该仓库的 token';
-    elements.poolMemberTokenHint.textContent = state.configured
-        ? '只有该仓库需要不同权限时才填写。'
-        : '这个仓库会成为第一个可用仓库和初始备份位置。';
-    elements.confirmPoolMemberButton.textContent = '校验并加入';
-    elements.poolMemberRepoInput.focus();
+    elements.poolMemberTokenHint.textContent = member ? '填写新的 token；仓库地址不会改变。'
+        : state.configured ? '只有该仓库需要不同权限时才填写。'
+            : '这个仓库会成为第一个可用仓库和初始备份位置。';
+    elements.confirmPoolMemberButton.textContent = member ? '保存' : '校验并加入';
+    (member ? elements.poolMemberTokenInput : elements.poolMemberRepoInput).focus();
 }
 
 function closePoolMemberEditor() {
     elements.poolMemberEditor.classList.add('hidden');
     elements.addPoolMemberButton.classList.remove('hidden');
+    state.editingRepositoryId = '';
     elements.poolMemberRepoInput.value = '';
+    elements.poolMemberRepoInput.readOnly = false;
     elements.poolMemberTokenInput.value = '';
 }
 
@@ -473,6 +485,18 @@ async function onAddPoolMember() {
         return;
     }
     try {
+        if (state.editingRepositoryId) {
+            if (!token) {
+                showToast('请填写新的 token。', 'error');
+                return;
+            }
+            setOperation('正在更新仓库凭据');
+            await apiRequest(`/pool/members/${encodeURIComponent(state.editingRepositoryId)}/credentials`, { method: 'PATCH', body: { token } });
+            closePoolMemberEditor();
+            await loadConfig();
+            showToast('仓库凭据已更新', 'success');
+            return;
+        }
         if (!state.configured && !token) {
             showToast('第一个仓库需要填写 token。', 'error');
             return;

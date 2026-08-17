@@ -1488,6 +1488,25 @@ select:focus {
     font-size: 0.82rem;
 }
 
+.pool-member-edit {
+    display: inline-grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--muted);
+    background: transparent;
+    cursor: pointer;
+}
+
+.pool-member-edit:hover,
+.pool-member-edit:focus-visible {
+    border-color: var(--accent);
+    color: var(--accent-deep);
+}
+
 .pool-member-badge {
     display: inline-flex;
     align-items: center;

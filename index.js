@@ -3447,6 +3447,25 @@ const plugin = {
             res.json({ ok: true, result });
         }));
 
+        router.patch('/pool/members/:repositoryId/credentials', asyncRoute(async (req, res) => {
+            const result = await withExclusiveOperation('正在更新仓库凭据', async () => {
+                const current = await readConfig();
+                ensureConfigured(current);
+                const token = trimToEmpty(req.body?.token);
+                if (!token) throw buildError('请填写新的 GitHub Token。', 400);
+                const candidate = runtimeConfigFromPersisted(repositoryPool.normalizeV2Config(current.__poolConfig));
+                const repositoryId = trimToEmpty(req.params.repositoryId);
+                const member = candidate.__poolConfig.repositories.find((item) => item.repositoryId === repositoryId);
+                if (!member) throw buildError('仓库不属于当前仓库池。', 404);
+                if (repositoryId === candidate.__poolConfig.catalogRepositoryId) candidate.__poolConfig.defaultToken = token;
+                else member.tokenOverride = token;
+                await ensureRepositoryReady(bindRuntimeConfigToMember(candidate, repositoryId), { ensurePool: false });
+                await saveConfig(candidate);
+                return { repositoryId };
+            });
+            res.json({ ok: true, result });
+        }));
+
         router.post('/pool/lanes/:laneId/switch', asyncRoute(async (req, res) => {
             const result = await withExclusiveOperation('正在切换后续备份仓库', async () => {
                 const config = await readConfig();
