@@ -1456,11 +1456,13 @@ select:focus {
 
 .pool-member-main {
     min-width: 0;
-    display: grid;
-    gap: 4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .pool-member-main strong {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1468,8 +1470,8 @@ select:focus {
 
 .pool-member-meta {
     display: flex;
+    flex: none;
     align-items: center;
-    flex-wrap: wrap;
     gap: 6px;
     color: var(--muted);
     font-size: 0.76rem;
