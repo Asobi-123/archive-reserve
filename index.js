@@ -10,6 +10,7 @@ const archiver = require('archiver');
 const express = require('express');
 const yauzl = require('yauzl');
 const repositoryPool = require('./repository-pool');
+const { aggregateMemberBackupResults } = require('./repository-pool-routing');
 const {
     MARKER_PATH,
     createRepositoryPoolStore,
@@ -1488,6 +1489,99 @@ async function listAllReleases(config) {
     }
 
     return releases;
+}
+
+async function readPoolDescriptorSnapshot(config, { allowStale = true } = {}) {
+    const catalogContext = repositoryPool.resolveMemberContext(config);
+    try {
+        const remote = await createPoolStore(config).readDescriptor(catalogContext);
+        if (!remote.exists) {
+            const initialized = await ensureRepositoryReady(config);
+            return {
+                descriptor: initialized.poolDescriptor,
+                sha: initialized.poolDescriptorSha,
+                stale: false,
+                error: null,
+            };
+        }
+        cachePoolDescriptor(config, remote.value, remote.sha);
+        return { descriptor: remote.value, sha: remote.sha, stale: false, error: null };
+    } catch (error) {
+        const cached = config.__poolConfig?.descriptorCache?.descriptor;
+        if (!allowStale || !cached) throw error;
+        return { descriptor: cached, sha: config.__poolConfig.descriptorCache.sha, stale: true, error };
+    }
+}
+
+function updateLocalMemberState(config, repositoryId, state) {
+    const local = config.__poolConfig?.repositories?.find((member) => member.repositoryId === repositoryId);
+    if (local) local.lastKnownState = state;
+}
+
+async function inspectReadableMember(config, descriptor, member) {
+    const context = repositoryPool.resolveMemberContext(config, member.repositoryId);
+    if (!context.token) throw buildError('仓库没有可用 token。', 403);
+    const boundConfig = repositoryPool.bindRuntimeConfigToMember(config, member.repositoryId);
+    const repoPath = repoApiPath(boundConfig, context);
+    const repoInfo = await requestGitHub(boundConfig, repoPath.path, { memberContext: context });
+    const verifiedContext = repositoryPool.verifyGitHubRepositoryIdentity(context, repoInfo, { allowBootstrap: false });
+    const store = createPoolStore(config);
+    const marker = await store.readJson(verifiedContext, MARKER_PATH);
+    repositoryPool.validateMemberMarker(marker.value, {
+        poolId: descriptor.poolId,
+        repositoryId: member.repositoryId,
+        githubRepositoryId: member.githubRepositoryId,
+        catalogRepositoryId: descriptor.catalogRepositoryId,
+    });
+    const mirrorRevision = member.repositoryId === descriptor.catalogRepositoryId
+        ? descriptor.revision
+        : (await store.readDescriptor(verifiedContext)).value?.revision;
+    const releases = await listAllReleases(boundConfig);
+    const state = repositoryPool.deriveMemberCapabilities({
+        member,
+        identityVerified: true,
+        readPermission: true,
+        writePermission: repoInfo.permissions?.push === true,
+        mirrorRevision,
+        catalogRevision: descriptor.revision,
+        lastValidatedAt: new Date().toISOString(),
+    });
+    updateLocalMemberState(config, member.repositoryId, state);
+    return {
+        repositoryId: member.repositoryId,
+        repo: member.repo,
+        membershipState: member.membershipState,
+        ...state,
+        error: null,
+        backups: releases.map(backupFromRelease).filter((backup) => backup?.complete),
+    };
+}
+
+async function listPoolBackups(config) {
+    const snapshot = await readPoolDescriptorSnapshot(config);
+    const activeMembers = snapshot.descriptor.members.filter((member) => member.membershipState === 'active');
+    const settled = await Promise.all(activeMembers.map(async (member) => {
+        try {
+            return await inspectReadableMember(config, snapshot.descriptor, member);
+        } catch (error) {
+            const lastValidatedAt = new Date().toISOString();
+            const state = { readable: false, catalogSynced: false, writeEligible: false, lastValidatedAt };
+            updateLocalMemberState(config, member.repositoryId, state);
+            return {
+                repositoryId: member.repositoryId,
+                repo: member.repo,
+                membershipState: member.membershipState,
+                ...state,
+                error: error.message || '仓库读取失败。',
+                backups: [],
+            };
+        }
+    }));
+    await saveConfig(config);
+    return aggregateMemberBackupResults(settled, {
+        descriptorStale: snapshot.stale,
+        descriptorError: snapshot.error,
+    });
 }
 
 function buildUploadUrl(release, assetName) {
@@ -3133,17 +3227,12 @@ const plugin = {
                 return;
             }
 
-            const releases = await listAllReleases(config);
-            const backups = releases
-                .map(backupFromRelease)
-                .filter(Boolean)
-                .filter((backup) => backup.complete)
-                .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
+            const pool = await listPoolBackups(config);
 
             res.json({
                 ok: true,
                 configured: true,
-                backups,
+                ...pool,
                 currentOperation,
                 progress: currentProgress,
             });
