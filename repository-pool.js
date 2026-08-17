@@ -14,6 +14,33 @@ function trim(value) {
     return typeof value === 'string' ? value.trim() : '';
 }
 
+function parseGitHubRepositoryInput(value) {
+    const input = trim(value);
+    if (!input) throw new TypeError('GitHub repository is required.');
+    const sshMatch = input.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i);
+    let owner = '';
+    let repo = '';
+    if (sshMatch) {
+        [, owner, repo] = sshMatch;
+    } else if (/^(?:https?:\/\/)?(?:www\.)?github\.com\//i.test(input)) {
+        const url = new URL(/^https?:\/\//i.test(input) ? input : `https://${input}`);
+        if (!['github.com', 'www.github.com'].includes(url.hostname.toLowerCase())) {
+            throw new TypeError('Only github.com repository URLs are supported.');
+        }
+        const parts = url.pathname.split('/').filter(Boolean);
+        [owner, repo] = parts;
+    } else {
+        const parts = input.replace(/^\/+|\/+$/g, '').split('/');
+        if (parts.length === 2) [owner, repo] = parts;
+    }
+    repo = trim(repo).replace(/\.git$/i, '');
+    owner = trim(owner);
+    if (!owner || !repo || !/^[A-Za-z0-9_.-]+$/.test(owner) || !/^[A-Za-z0-9_.-]+$/.test(repo)) {
+        throw new TypeError('Invalid GitHub repository input.');
+    }
+    return { owner, repo, slug: `${owner}/${repo}` };
+}
+
 function normalizeDeviceKey(value) {
     return trim(value).toLowerCase();
 }
@@ -649,6 +676,7 @@ module.exports = {
     findLane,
     normalizeBackupRoot,
     normalizeDeviceKey,
+    parseGitHubRepositoryInput,
     normalizeV2Config,
     repositoryMember,
     resolveBackupReservation,

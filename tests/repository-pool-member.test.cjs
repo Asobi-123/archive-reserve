@@ -5,11 +5,19 @@ const test = require('node:test');
 
 const {
     buildMemberMarker,
+    parseGitHubRepositoryInput,
     buildV2ConfigFromLegacy,
     resolveMemberContext,
     validateMemberMarker,
     verifyGitHubRepositoryIdentity,
 } = require('../repository-pool.js');
+
+test('normalizes copied GitHub repository links without manual trimming', () => {
+    assert.equal(parseGitHubRepositoryInput('https://github.com/Owner/Repo/settings?tab=access').slug, 'Owner/Repo');
+    assert.equal(parseGitHubRepositoryInput('github.com/Owner/Repo/').slug, 'Owner/Repo');
+    assert.equal(parseGitHubRepositoryInput('git@github.com:Owner/Repo.git').slug, 'Owner/Repo');
+    assert.equal(parseGitHubRepositoryInput('Owner/Repo').slug, 'Owner/Repo');
+});
 
 function idFactory() {
     let index = 0;

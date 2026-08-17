@@ -204,37 +204,11 @@ async function getFetchFn() {
 }
 
 function parseRepoInput(value) {
-    const input = trimToEmpty(value);
-    if (!input) {
-        throw buildError('请填写 GitHub 仓库，例如 owner/repo。');
+    try {
+        return repositoryPool.parseGitHubRepositoryInput(value);
+    } catch (error) {
+        throw buildError('仓库地址无效。可以直接粘贴 GitHub 仓库页面链接，或填写 owner/repo。');
     }
-
-    const trimmed = input.replace(/^github\.com\//i, 'https://github.com/');
-    const urlMatch = trimmed.match(/^https?:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
-
-    let owner = '';
-    let repo = '';
-
-    if (urlMatch) {
-        owner = urlMatch[1];
-        repo = urlMatch[2];
-    } else {
-        const parts = input.replace(/\.git$/i, '').split('/').filter(Boolean);
-        if (parts.length !== 2) {
-            throw buildError('仓库格式不对。请填写 owner/repo 或完整 GitHub 链接。');
-        }
-        [owner, repo] = parts;
-    }
-
-    if (!owner || !repo) {
-        throw buildError('仓库格式不对。请填写 owner/repo。');
-    }
-
-    return {
-        owner,
-        repo,
-        slug: `${owner}/${repo}`,
-    };
 }
 
 function normalizeRelativePath(input, { allowRoot = false } = {}) {
