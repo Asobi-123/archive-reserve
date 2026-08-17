@@ -171,6 +171,9 @@ Expected:
 - Refresh gives visible feedback.
 - GC returns a result even when nothing is reclaimable.
 - Reclaimable space decreases after orphan chunks are deleted.
+- If any pool member or metadata asset is unavailable, the scan is marked incomplete and no chunk is deleted.
+- A new orphan remains protected after the first complete scan and becomes eligible only after a second complete scan at least six hours later.
+- Deleting a backup does not immediately run GC or touch another member's same-named assets.
 
 ## 11. Auto Backup
 

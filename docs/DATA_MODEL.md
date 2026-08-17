@@ -433,6 +433,12 @@ Runtime capabilities are derived rather than stored in the remote descriptor:
 
 A mirror failure may set `catalogSynced=false` and `writeEligible=false` without hiding otherwise readable historical backups.
 
+### Local Orphan Ledger
+
+`data/.archive-reserve/orphan-ledger.json` is an atomically written, member-scoped observation ledger. An asset becomes GC-eligible only when the same immutable release/asset identity appears as unreferenced in two complete pool scans separated by the grace interval. Any catalog, release, metadata, chunk-store, or ledger read failure leaves the ledger unchanged and authorizes no deletion.
+
+Deleting a backup release and applying retention never delete chunk assets inline. They only make assets candidates for a later complete GC scan. Identical release or asset names in different repositories remain isolated by `repositoryId`.
+
 ### Historical Lane Resolution
 
 The first v1 migration reads a complete catalog backup-release inventory before constructing lanes.
