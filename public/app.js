@@ -331,7 +331,7 @@ function renderPoolMembers() {
                 ? `<button class="btn btn-secondary" type="button" data-action="cancel-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}">取消加入</button>`
                 : `<button class="pool-member-edit" type="button" data-action="edit-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}" aria-label="更新 ${escapeHtml(member.repo)} 的凭据" title="更新凭据">✎</button>`;
             const catalogBadge = member.repositoryId === state.config?.catalogRepositoryId
-                ? '<span class="pool-member-badge">目录仓库</span>'
+                ? '<span class="pool-member-badge" title="保存仓库池配置，不代表当前写入位置">主仓库</span>'
                 : '';
             const activeBadge = activeSegment?.repositoryId === member.repositoryId
                 ? '<span class="pool-member-badge is-current">当前写入</span>'

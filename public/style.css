@@ -394,6 +394,26 @@ code {
     line-height: 1.6;
 }
 
+.pool-guide {
+    display: grid;
+    gap: 5px;
+    margin: -4px 0 18px;
+    padding: 12px 0;
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+.pool-guide p {
+    margin: 0;
+}
+
+.pool-guide strong {
+    color: var(--ink);
+}
+
 .toolbar {
     display: flex;
     align-items: end;

@@ -3517,6 +3517,7 @@ const plugin = {
                 return await runBackupJob(config, {
                     name: req.body?.name,
                     note: req.body?.note,
+                    repositoryId: trimToEmpty(req.body?.repositoryId),
                 });
             });
 
