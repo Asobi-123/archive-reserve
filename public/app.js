@@ -26,6 +26,7 @@ const state = {
     spaceStats: null,
     spaceStatsState: 'idle',
     spaceStatsError: '',
+    spaceStatsNeedsRefresh: false,
     modal: {
         releaseId: null,
         repositoryId: null,
@@ -270,7 +271,11 @@ async function ensureActiveTabData() {
         }
 
         if (state.activeTab === 'maintenance') {
-            renderSpaceStats();
+            if (state.spaceStatsNeedsRefresh) {
+                await loadSpaceStats(true);
+            } else {
+                renderSpaceStats();
+            }
         }
     } catch (error) {
         showToast(error.message || '读取档案库失败', 'error');
@@ -569,6 +574,7 @@ async function loadSpaceStats(quiet = false) {
         const result = await apiRequest('/maintenance/space');
         state.spaceStats = result.stats || null;
         state.spaceStatsState = 'loaded';
+        state.spaceStatsNeedsRefresh = false;
         renderSpaceStats();
         return true;
     } catch (error) {
@@ -707,6 +713,7 @@ function invalidateSpaceStats() {
     state.spaceStats = null;
     state.spaceStatsState = 'idle';
     state.spaceStatsError = '';
+    state.spaceStatsNeedsRefresh = true;
     renderSpaceStats();
 }
 
