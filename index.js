@@ -1534,8 +1534,20 @@ async function listAllReleasesViaGraphql(config, repoPath) {
 }
 
 async function readPoolDescriptorSnapshot(config, { allowStale = true } = {}) {
-    const catalogContext = repositoryPool.resolveMemberContext(config);
+    let catalogContext = repositoryPool.resolveMemberContext(config);
     try {
+        // A fresh device may only know the repository it was configured with.
+        // Establish its immutable GitHub identity before adopting a remote pool.
+        if (!catalogContext.githubRepositoryId) {
+            const initialized = await ensureRepositoryReady(config);
+            return {
+                descriptor: initialized.poolDescriptor,
+                sha: initialized.poolDescriptorSha,
+                stale: false,
+                error: null,
+            };
+        }
+
         const remote = await createPoolStore(config).readDescriptor(catalogContext);
         if (!remote.exists) {
             const initialized = await ensureRepositoryReady(config);
@@ -1546,6 +1558,25 @@ async function readPoolDescriptorSnapshot(config, { allowStale = true } = {}) {
                 error: null,
             };
         }
+
+        const localPool = config.__poolConfig;
+        const remoteMemberIds = remote.value.members
+            .map((member) => `${member.repositoryId}:${member.githubRepositoryId}`)
+            .sort()
+            .join('|');
+        const localMemberIds = localPool?.repositories
+            .map((member) => `${member.repositoryId}:${member.githubRepositoryId}`)
+            .sort()
+            .join('|');
+        const needsAdoption = !localPool
+            || localPool.poolId !== remote.value.poolId
+            || localPool.catalogRepositoryId !== remote.value.catalogRepositoryId
+            || localMemberIds !== remoteMemberIds;
+        if (needsAdoption) {
+            repositoryPool.adoptRemoteDescriptor(config, remote.value, catalogContext.githubRepositoryId);
+            await saveConfig(config);
+        }
+
         cachePoolDescriptor(config, remote.value, remote.sha);
         return { descriptor: remote.value, sha: remote.sha, stale: false, error: null };
     } catch (error) {
