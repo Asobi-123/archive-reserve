@@ -145,7 +145,7 @@ Shape:
   "createdAt": "2026-04-10T10:25:12.000Z",
   "plugin": {
     "id": "archive-reserve",
-    "version": "0.3.0"
+    "version": "0.3.1"
   },
   "device": {
     "id": "b7d4c1d74b834a5b8fa1c1ce49a5b8f2",
@@ -370,14 +370,15 @@ Shape:
 }
 ```
 
-## Repository Pool v1 Contract (Implemented In 0.3.0)
+## Repository Pool v1 Contract (Implemented In 0.3.0, Updated In 0.3.1)
 
-This section describes the repository-pool contract implemented by the 0.3.0 runtime.
+This section describes the repository-pool contract implemented by the 0.3.1 runtime.
 
 ### Authority And Persistence
 
 - The catalog copy of `.archive-reserve.pool.json` is the only authority for members, lanes, and segments.
 - Member descriptor copies are repairable mirrors. Local descriptor data is a cache.
+- When a configured repository belongs to an existing remote pool, its immutable GitHub repository ID is validated before the remote descriptor is adopted. The adopted member mapping is saved locally; tokens remain local.
 - A stale local cache may support explicitly marked read-only listing, download, health check, and user-selected restore.
 - Backup creation, member admission, segment switching, backup deletion, retention, and GC require a fresh catalog descriptor.
 - Local config writes use a validated temporary file, file sync, atomic replacement, and a recoverable pre-migration copy. Invalid JSON or schema never triggers a silent reset.

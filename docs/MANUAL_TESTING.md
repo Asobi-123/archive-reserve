@@ -98,7 +98,7 @@ Steps:
 4. Confirm that both `仓库设置` and `创建备份` show the second member as the current write repository.
 5. Create a backup, switch back to the first repository, and create another backup with mostly unchanged data.
 6. Refresh `档案库` and confirm that backups from both repositories are present.
-7. Configure another Archive Reserve device with the same catalog repository and token, then open its archive library.
+7. Configure another Archive Reserve device with the same catalog repository and token, then open its archive library before adding or changing any repository members.
 
 Expected:
 
@@ -107,6 +107,7 @@ Expected:
 - Each completed backup and all of its chunks remain in one source repository.
 - Returning to a previously used repository reuses its existing chunks instead of initializing a new store.
 - Both devices adopt the same pool and can see backups from every readable member.
+- The new device saves the adopted member mapping locally and does not require a placeholder repository to reveal existing backups.
 - A member with its own token uses that local override without exposing the token in UI responses or remote pool files.
 
 ## 5B. Partial Repository Read
@@ -250,7 +251,7 @@ Expected:
 
 Before tagging a release:
 
-- `package.json`, `package-lock.json`, and the plugin info endpoint report `0.3.0`.
+- `package.json`, `package-lock.json`, and the plugin info endpoint report `0.3.1`.
 - `README.md` and `README_EN.md` describe the current install path and UI entry correctly.
 - `CHANGELOG.md` includes the release entry and date.
 - The first-repository flow, two-repository switching, cross-device adoption, combined archive library, restore flow, download flow, maintenance breakdown, incomplete-scan GC block, and auto backup have all been tested at least once.

@@ -47,12 +47,13 @@ The real payload lives in reusable hidden chunk assets referenced by that metada
 ### 3. Archive library and backup download
 
 1. The UI reads `/backups`.
-2. The server reads the catalog descriptor, verifies each active member's immutable GitHub id and pool marker, and scans readable members independently. Transient read-only GitHub failures are retried before a member is reported unavailable.
-3. A failed member is returned as a partial-result error; it is never represented as an empty repository. A cached descriptor is identified as stale when the live catalog cannot be read.
-4. Only releases with the Archive Reserve summary body plus `meta.json` are treated as valid backups. Every result is keyed by `repositoryId + releaseId`, so equal GitHub release ids in different members remain distinct.
-5. The UI groups and filters those backups by name, note, device, and displayed backup root.
-6. Tree, health-check, and download requests resolve the requested `repositoryId` against the current pool before accessing a release. A multi-member pool rejects an omitted member id; a single-member pool may infer it for compatibility.
-7. When the user clicks download, the plugin reconstructs a complete zip from chunks in that same source repository, streams it to the browser, then removes temporary files.
+2. On a newly configured device, the server validates the configured repository's immutable GitHub identity, adopts the matching remote pool descriptor into local config, and saves the resulting member mapping.
+3. The server reads the catalog descriptor, verifies each active member's immutable GitHub id and pool marker, and scans readable members independently. Transient read-only GitHub failures are retried before a member is reported unavailable.
+4. A failed member is returned as a partial-result error; it is never represented as an empty repository. A cached descriptor is identified as stale when the live catalog cannot be read.
+5. Only releases with the Archive Reserve summary body plus `meta.json` are treated as valid backups. Every result is keyed by `repositoryId + releaseId`, so equal GitHub release ids in different members remain distinct.
+6. The UI groups and filters those backups by name, note, device, and displayed backup root.
+7. Tree, health-check, and download requests resolve the requested `repositoryId` against the current pool before accessing a release. A multi-member pool rejects an omitted member id; a single-member pool may infer it for compatibility.
+8. When the user clicks download, the plugin reconstructs a complete zip from chunks in that same source repository, streams it to the browser, then removes temporary files.
 
 ### 4. Full restore and selective restore
 

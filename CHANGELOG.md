@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-08-18
+
+### Fixed
+
+- A newly configured device now recognizes and adopts an existing repository pool before loading the archive library, so backups from every accessible pool member remain available without adding another repository first.
+
 ## [0.3.0] - 2026-08-18
 
 ### Added
