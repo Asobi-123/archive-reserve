@@ -11,10 +11,9 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- A new device can adopt one manually entered repository from an existing Archive Reserve pool after starting with an empty repository, as long as that repository has a valid pool marker and descriptor.
-- Remote pool adoption no longer imports the pool's other members into local configuration. Each repository must be added manually, one at a time.
-- Added per-repository local configuration deletion. Removing a row changes only this device's configuration and never deletes GitHub repositories, backups, markers, or remote pool descriptors.
-- Space statistics, backup listing, source resolution, garbage collection, and new-lane selection now operate only on locally configured members.
+- Fixed cross-device setup for existing repositories. A new device can add an existing Archive Reserve repository and see its previous backups without first adding a placeholder repository.
+- Fixed repository setup so adding one existing repository does not make other repositories appear automatically. Additional repositories are added only when the user chooses them.
+- Added a delete action for individual repository rows in `仓库设置`. It removes only that repository from the current device's local configuration; GitHub repositories and remote backups are left unchanged.
 
 ## [0.3.1] - 2026-08-18
 
