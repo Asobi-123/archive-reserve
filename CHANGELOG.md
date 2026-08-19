@@ -11,7 +11,7 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
-- Fixed cross-device setup for existing repositories. A new device can add an existing Archive Reserve repository and see its previous backups without first adding a placeholder repository.
+- Fixed first-time repository setup for both existing Archive Reserve repositories and brand-new empty repositories. A new device can configure either kind correctly and continue to use the repository normally.
 - Fixed repository setup so adding one existing repository does not make other repositories appear automatically. Additional repositories are added only when the user chooses them.
 - Added a delete action for individual repository rows in `仓库设置`. It removes only that repository from the current device's local configuration; GitHub repositories and remote backups are left unchanged.
 
