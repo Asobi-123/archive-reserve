@@ -98,7 +98,7 @@ Steps:
 4. Confirm that both `仓库设置` and `创建备份` show the second member as the current write repository.
 5. Create a backup, switch back to the first repository, and create another backup with mostly unchanged data.
 6. Refresh `档案库` and confirm that backups from both repositories are present.
-7. Configure another Archive Reserve device with the same catalog repository and token, then open its archive library before adding or changing any repository members.
+7. Clear the second device's local Archive Reserve config. Add one existing pool repository manually, then open its archive library. Do not add the other pool repositories.
 
 Expected:
 
@@ -106,9 +106,27 @@ Expected:
 - The selected write repository is consistent across settings and backup creation.
 - Each completed backup and all of its chunks remain in one source repository.
 - Returning to a previously used repository reuses its existing chunks instead of initializing a new store.
-- Both devices adopt the same pool and can see backups from every readable member.
-- The new device saves the adopted member mapping locally and does not require a placeholder repository to reveal existing backups.
+- The second device adopts only the manually entered member and sees backups readable through that member.
+- The second device does not display or scan other remote pool members until each one is manually added.
 - A member with its own token uses that local override without exposing the token in UI responses or remote pool files.
+
+## 5C. Existing Pool Adoption And Local Member Deletion
+
+Steps:
+
+1. Start from an empty local Archive Reserve configuration.
+2. Add a brand-new empty repository and confirm it works.
+3. Add one repository that already contains an Archive Reserve marker and pool descriptor.
+4. Confirm that only the manually entered existing repository is adopted; no other remote pool member appears.
+5. Delete one repository row with its `x` action.
+6. Refresh the page and inspect the remote pool from another device.
+
+Expected:
+
+- A valid existing repository is adopted without the "请改用空仓库" error.
+- No remote descriptor, marker, mirror, release, or backup is written during adoption.
+- Deleting a row removes only that repository from this device's local configuration.
+- The deleted repository and its backups remain unchanged on GitHub and can be manually added again later.
 
 ## 5B. Partial Repository Read
 
@@ -251,7 +269,7 @@ Expected:
 
 Before tagging a release:
 
-- `package.json`, `package-lock.json`, and the plugin info endpoint report `0.3.1`.
+- `package.json`, `package-lock.json`, and the plugin info endpoint report `0.3.2`.
 - `README.md` and `README_EN.md` describe the current install path and UI entry correctly.
 - `CHANGELOG.md` includes the release entry and date.
 - The first-repository flow, two-repository switching, cross-device adoption, combined archive library, restore flow, download flow, maintenance breakdown, incomplete-scan GC block, and auto backup have all been tested at least once.

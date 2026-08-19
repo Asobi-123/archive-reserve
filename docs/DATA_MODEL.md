@@ -145,7 +145,7 @@ Shape:
   "createdAt": "2026-04-10T10:25:12.000Z",
   "plugin": {
     "id": "archive-reserve",
-    "version": "0.3.1"
+    "version": "0.3.2"
   },
   "device": {
     "id": "b7d4c1d74b834a5b8fa1c1ce49a5b8f2",
@@ -370,15 +370,17 @@ Shape:
 }
 ```
 
-## Repository Pool v1 Contract (Implemented In 0.3.0, Updated In 0.3.1)
+## Repository Pool v1 Contract (Implemented In 0.3.0, Updated In 0.3.2)
 
-This section describes the repository-pool contract implemented by the 0.3.1 runtime.
+This section describes the repository-pool contract implemented by the 0.3.2 runtime.
 
 ### Authority And Persistence
 
 - The catalog copy of `.archive-reserve.pool.json` is the only authority for members, lanes, and segments.
 - Member descriptor copies are repairable mirrors. Local descriptor data is a cache.
-- When a configured repository belongs to an existing remote pool, its immutable GitHub repository ID is validated before the remote descriptor is adopted. The adopted member mapping is saved locally; tokens remain local.
+- When a user enters a repository that belongs to an existing remote pool, its immutable GitHub repository ID and marker are validated before that one member is adopted locally. The remote descriptor is read as identity and lane metadata, but its other members are never imported automatically.
+- Local configuration is an explicit allowlist. Listing, source resolution, space statistics, garbage collection, and new-lane selection operate only on locally configured members.
+- Deleting a repository row is local-only. It never deletes or edits the GitHub repository, releases, marker, mirror, or remote catalog descriptor.
 - A stale local cache may support explicitly marked read-only listing, download, health check, and user-selected restore.
 - Backup creation, member admission, segment switching, backup deletion, retention, and GC require a fresh catalog descriptor.
 - Local config writes use a validated temporary file, file sync, atomic replacement, and a recoverable pre-migration copy. Invalid JSON or schema never triggers a silent reset.
@@ -483,14 +485,16 @@ The marker has no descriptor revision. `catalogSynced` compares the catalog desc
 
 ### Member Admission And Capabilities
 
-Member admission is resumable:
+New-member admission is resumable for empty repositories:
 
-1. Validate GitHub repository identity, permissions, marker state, and existing Archive Reserve content.
+1. Validate GitHub repository identity, permissions, and that the repository has no existing Archive Reserve content.
 2. CAS a `membershipState: pending` member into the catalog descriptor.
 3. Write the matching marker and descriptor mirror.
 4. CAS the member to `membershipState: active` and mirror the new revision.
 
 A pending member is never readable or writable through pool operations. It may be removed only when it has never been active, contains no Archive Reserve release/chunk payload, and its marker exactly matches the pending admission being cancelled. Active member removal is out of scope.
+
+Existing-pool adoption is a separate read-only path. It requires a valid marker and descriptor for the manually entered repository, adopts only that member into local configuration, and does not create or update remote descriptor or mirror files.
 
 Runtime capabilities are derived rather than stored in the remote descriptor:
 

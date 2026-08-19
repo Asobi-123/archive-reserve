@@ -387,7 +387,9 @@ Switching back to a repository used before continues reusing its existing chunks
 
 - Use `添加仓库` in `仓库设置` to expand the pool.
 - A new member can reuse the first repository token. Enter a separate token only when its permissions differ.
+- Existing pool members must also be added manually, one at a time. Entering one old repository never imports the remote pool's other members.
 - The pool does not load-balance automatically. One backup always remains complete inside one repository.
+- The delete action on a repository row removes only this device's local configuration; it never deletes the GitHub repository or remote backups.
 - `当前写入仓库` controls where this device creates later backups. Switching does not move historical archives.
 - The library, restore, download, health check, and maintenance views read every available pool member.
 
@@ -411,9 +413,9 @@ Open `档案库`, choose a backup, open path restore, tick the folders or files 
 ### Cross-device restore
 
 1. Device A uploads a backup.
-2. Device B adds any existing pool member and provides a token that can access the relevant repositories.
-3. After Archive Reserve recognizes the same pool, Device B opens `档案库`.
-4. Device B restores Device A's backup from any member repository.
+2. Device B manually adds one existing repository and provides a token that can access it.
+3. After Archive Reserve recognizes that repository's pool, Device B opens `档案库`.
+4. Device B manually adds other pool members one at a time when it needs access to them; Archive Reserve never imports them automatically.
 
 The same repository can be used by multiple Archive Reserve devices.
 

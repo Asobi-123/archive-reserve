@@ -350,7 +350,7 @@ function renderPoolMembers() {
                         : member.lastKnownState?.readable === false ? '不可读' : '可用';
             const action = member.membershipState === 'pending'
                 ? `<button class="btn btn-secondary" type="button" data-action="cancel-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}">取消加入</button>`
-                : `<button class="pool-member-edit" type="button" data-action="edit-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}" aria-label="更新 ${escapeHtml(member.repo)} 的凭据" title="更新凭据">✎</button>`;
+                : `<span class="pool-member-actions"><button class="pool-member-edit" type="button" data-action="edit-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}" aria-label="更新 ${escapeHtml(member.repo)} 的凭据" title="更新凭据">✎</button><button class="pool-member-delete" type="button" data-action="delete-pool-member" data-repository-id="${escapeHtml(member.repositoryId)}" aria-label="删除 ${escapeHtml(member.repo)} 的本机配置" title="删除本机配置">×</button></span>`;
             const catalogBadge = member.repositoryId === state.config?.catalogRepositoryId
                 ? '<span class="pool-member-badge" title="保存仓库池配置，不代表当前写入位置">主仓库</span>'
                 : '';
@@ -378,6 +378,27 @@ async function onPoolMemberListClick(event) {
     const editButton = event.target.closest('[data-action="edit-pool-member"]');
     if (editButton) {
         openPoolMemberEditor(editButton.dataset.repositoryId);
+        return;
+    }
+    const deleteButton = event.target.closest('[data-action="delete-pool-member"]');
+    if (deleteButton) {
+        if (isBusy()) {
+            showToast(`当前正在执行：${state.currentOperation}`, 'error');
+            return;
+        }
+        if (!window.confirm('只删除这台设备上的该仓库配置，不会删除 GitHub 仓库、备份或远端仓库池。确定删除吗？')) return;
+        try {
+            setOperation('正在删除本机仓库配置');
+            await apiRequest(`/pool/members/${encodeURIComponent(deleteButton.dataset.repositoryId)}`, {
+                method: 'DELETE',
+                body: { localOnly: true },
+            });
+            await loadConfig();
+            showToast('已删除本机仓库配置，远端数据未改变', 'success');
+        } catch (error) {
+            state.currentOperation = '';
+            showToast(error.message || '删除本机仓库配置失败', 'error');
+        }
         return;
     }
     const cancelButton = event.target.closest('[data-action="cancel-pool-member"]');

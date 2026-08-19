@@ -47,8 +47,8 @@ The real payload lives in reusable hidden chunk assets referenced by that metada
 ### 3. Archive library and backup download
 
 1. The UI reads `/backups`.
-2. On a newly configured device, the server validates the configured repository's immutable GitHub identity, adopts the matching remote pool descriptor into local config, and saves the resulting member mapping.
-3. The server reads the catalog descriptor, verifies each active member's immutable GitHub id and pool marker, and scans readable members independently. Transient read-only GitHub failures are retried before a member is reported unavailable.
+2. On a newly configured device, the server validates the manually configured repository's immutable GitHub identity and pool marker. If it belongs to an existing pool, only that member is adopted into local config; the remote member list is never bulk-imported.
+3. The server filters the remote descriptor through the local configuration allowlist, verifies each configured active member's immutable GitHub id and pool marker, and scans those readable members independently. Transient read-only GitHub failures are retried before a member is reported unavailable.
 4. A failed member is returned as a partial-result error; it is never represented as an empty repository. A cached descriptor is identified as stale when the live catalog cannot be read.
 5. Only releases with the Archive Reserve summary body plus `meta.json` are treated as valid backups. Every result is keyed by `repositoryId + releaseId`, so equal GitHub release ids in different members remain distinct.
 6. The UI groups and filters those backups by name, note, device, and displayed backup root.

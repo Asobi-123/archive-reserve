@@ -52,6 +52,37 @@ test('migrates a v1 config into one stable catalog member', () => {
     assert.equal(next.autoBackupEnabled, true);
 });
 
+test('replaces an empty v2 placeholder when the first repository is configured', () => {
+    const next = buildV2ConfigFromLegacy({
+        configVersion: 2,
+        poolId: 'pool-empty',
+        catalogRepositoryId: 'repo-empty',
+        defaultToken: '',
+        repositories: [{
+            repositoryId: 'repo-empty',
+            githubRepositoryId: '',
+            repo: '',
+            membershipState: 'active',
+        }],
+        descriptorCache: null,
+        repo: 'owner/existing-archive',
+        token: 'first-token',
+        deviceId: 'device-a',
+        deviceName: 'MacBook',
+        backupRoot: 'default-user',
+    }, {
+        idFactory: idFactory(),
+        now: '2026-08-19T00:00:00.000Z',
+    });
+
+    assert.equal(next.poolId, 'pool-test-2');
+    assert.equal(next.catalogRepositoryId, 'repo-test-1');
+    assert.equal(next.defaultToken, 'first-token');
+    assert.deepEqual(next.repositories.map((member) => member.repo), ['owner/existing-archive']);
+    assert.equal(next.repositories[0].githubRepositoryId, '');
+    assert.equal(next.deviceId, 'device-a');
+});
+
 test('normalizes only a valid v2 config and rejects catalog drift', () => {
     const config = normalizeV2Config({
         configVersion: 2,
@@ -140,7 +171,7 @@ test('persists updated catalog and member credentials without stale overrides', 
     assert.equal(saved.repositories[1].tokenOverride, 'repo-b-token');
 });
 
-test('adopts every remote member while preserving local token overrides', () => {
+test('adopts a remote pool without importing unconfigured members', () => {
     const persisted = buildV2ConfigFromLegacy({ repo: 'owner/archive-a', token: 'default-token' }, {
         idFactory: idFactory(),
         githubRepositoryId: '1001',
@@ -154,12 +185,12 @@ test('adopts every remote member while preserving local token overrides', () => 
     ];
     adoptRemoteDescriptor(runtime, descriptor, '1001');
     assert.equal(runtime.catalogRepositoryId, 'repo-remote-a');
-    assert.equal(runtime.repositories.length, 2);
+    assert.equal(runtime.repositories.length, 1);
     assert.equal(runtime.repositories[0].tokenOverride, 'catalog-override');
-    assert.equal(runtime.repositories[1].tokenOverride, undefined);
+    assert.equal(runtime.repositories.some((member) => member.repositoryId === 'repo-remote-b'), false);
 });
 
-test('adopts an existing pool from a non-catalog member without changing the catalog address', () => {
+test('adopts an existing pool from a non-catalog member without importing its catalog', () => {
     const local = buildV2ConfigFromLegacy({ repo: 'owner/archive-b', token: 'shared-token' }, {
         idFactory: idFactory(),
         githubRepositoryId: '1002',
@@ -173,9 +204,35 @@ test('adopts an existing pool from a non-catalog member without changing the cat
 
     adoptRemoteDescriptor(runtime, descriptor, '1002');
     const saved = serializeRuntimeConfig(runtime);
-    assert.equal(runtime.repo, 'owner/archive-a');
-    assert.equal(saved.repositories.find((member) => member.repositoryId === 'repo-remote-a').repo, 'owner/archive-a');
+    assert.equal(runtime.repo, 'owner/archive-b');
+    assert.equal(saved.repositories.find((member) => member.repositoryId === 'repo-remote-a'), undefined);
     assert.equal(saved.repositories.find((member) => member.repositoryId === 'repo-remote-b').repo, 'owner/archive-b');
+});
+
+test('uses the manually configured remote member when the old catalog is not local', () => {
+    const local = buildV2ConfigFromLegacy({ repo: 'owner/blank', token: 'blank-token' }, {
+        idFactory: idFactory(),
+        githubRepositoryId: '2001',
+    });
+    local.repositories.push({
+        repositoryId: 'repo-remote-b',
+        githubRepositoryId: '1002',
+        repo: 'owner/archive-b',
+        membershipState: 'active',
+        tokenOverride: 'archive-token',
+    });
+    const runtime = toRuntimeConfig(local);
+    const descriptor = createEmptyDescriptor({ poolId: 'pool-remote', catalogRepositoryId: 'repo-remote-a' });
+    descriptor.members = [
+        { repositoryId: 'repo-remote-a', githubRepositoryId: '1001', repo: 'owner/archive-a', membershipState: 'active' },
+        { repositoryId: 'repo-remote-b', githubRepositoryId: '1002', repo: 'owner/archive-b', membershipState: 'active' },
+    ];
+
+    adoptRemoteDescriptor(runtime, descriptor, '1002');
+    assert.equal(runtime.catalogRepositoryId, 'repo-remote-b');
+    assert.equal(runtime.repo, 'owner/archive-b');
+    assert.equal(runtime.token, 'archive-token');
+    assert.equal(runtime.repositories.length, 2);
 });
 
 test('builds legacy lanes conservatively and preserves a negative-infinity segment', () => {

@@ -95,7 +95,24 @@ function buildV2ConfigFromLegacy(input, { idFactory = createId, githubRepository
         throw new TypeError('Legacy config must be an object.');
     }
     if (Number(input.configVersion) === 2) {
-        return normalizeV2Config(input);
+        const members = Array.isArray(input.repositories) ? input.repositories : [];
+        const hasConfiguredMember = members.some((member) => trim(member?.repo));
+        if (hasConfiguredMember || !trim(input.repo) || !trim(input.token)) {
+            return normalizeV2Config(input);
+        }
+
+        // A deleted config is recreated as an empty v2 pool before the user adds
+        // the first repository. Rebuild that placeholder as a new pool instead
+        // of preserving its empty catalog member.
+        const {
+            configVersion,
+            poolId,
+            catalogRepositoryId,
+            repositories,
+            descriptorCache,
+            ...legacyInput
+        } = input;
+        return buildV2ConfigFromLegacy(legacyInput, { idFactory, githubRepositoryId, now });
     }
 
     const repo = trim(input.repo);
@@ -333,12 +350,28 @@ function adoptRemoteDescriptor(config, descriptor, githubRepositoryId) {
         String(member.githubRepositoryId),
         member.tokenOverride || '',
     ]));
-    pool.repositories = descriptor.members.map((member) => repositoryMember({
-        ...member,
-        tokenOverride: localCredentials.get(String(member.githubRepositoryId)) || '',
-    }));
+    pool.repositories = pool.repositories.map((member) => {
+        const remote = descriptor.members.find((candidate) => (
+            String(candidate.githubRepositoryId) === String(member.githubRepositoryId)
+        ));
+        return remote
+            ? repositoryMember({
+                ...remote,
+                tokenOverride: localCredentials.get(String(member.githubRepositoryId)) || '',
+            })
+            : member;
+    });
     pool.poolId = descriptor.poolId;
-    pool.catalogRepositoryId = descriptor.catalogRepositoryId;
+    const remoteCatalog = descriptor.members.find((member) => member.repositoryId === descriptor.catalogRepositoryId);
+    const localCatalog = pool.repositories.find((member) => member.repositoryId === pool.catalogRepositoryId);
+    const adoptedCatalog = pool.repositories.find((member) => (
+        remoteCatalog && String(member.githubRepositoryId) === String(remoteCatalog.githubRepositoryId)
+    ));
+    const localCatalogIsRemote = localCatalog && descriptor.members.some((member) => (
+        String(member.githubRepositoryId) === String(localCatalog.githubRepositoryId)
+    ));
+    pool.catalogRepositoryId = adoptedCatalog?.repositoryId
+        || (localCatalogIsRemote ? localCatalog.repositoryId : remoteMember.repositoryId);
     pool.descriptorCache = {
         revision: descriptor.revision,
         sha: null,
@@ -352,6 +385,7 @@ function adoptRemoteDescriptor(config, descriptor, githubRepositoryId) {
     const catalogMember = pool.repositories.find((member) => member.repositoryId === pool.catalogRepositoryId);
     if (!catalogMember) throw new Error('Remote pool has no catalog member.');
     config.repo = catalogMember.repo;
+    config.token = catalogMember.tokenOverride || pool.defaultToken;
     return config;
 }
 

@@ -1619,7 +1619,13 @@ select:focus {
     font-size: 0.82rem;
 }
 
-.pool-member-edit {
+.pool-member-actions {
+    display: inline-flex;
+    gap: 6px;
+}
+
+.pool-member-edit,
+.pool-member-delete {
     display: inline-grid;
     place-items: center;
     width: 34px;
@@ -1633,9 +1639,17 @@ select:focus {
 }
 
 .pool-member-edit:hover,
-.pool-member-edit:focus-visible {
+.pool-member-edit:focus-visible,
+.pool-member-delete:hover,
+.pool-member-delete:focus-visible {
     border-color: var(--accent);
     color: var(--accent-deep);
+}
+
+.pool-member-delete:hover,
+.pool-member-delete:focus-visible {
+    border-color: #b24e43;
+    color: #b24e43;
 }
 
 .pool-member-badge {

@@ -33,7 +33,7 @@ const info = {
     id: 'archive-reserve',
     name: 'Archive Reserve',
     description: '完整打包 SillyTavern data，并存入 GitHub Releases，支持整包或按路径恢复。',
-    version: '0.3.1',
+    version: '0.3.2',
 };
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -1560,18 +1560,16 @@ async function readPoolDescriptorSnapshot(config, { allowStale = true } = {}) {
         }
 
         const localPool = config.__poolConfig;
-        const remoteMemberIds = remote.value.members
-            .map((member) => `${member.repositoryId}:${member.githubRepositoryId}`)
-            .sort()
-            .join('|');
-        const localMemberIds = localPool?.repositories
-            .map((member) => `${member.repositoryId}:${member.githubRepositoryId}`)
-            .sort()
-            .join('|');
         const needsAdoption = !localPool
             || localPool.poolId !== remote.value.poolId
-            || localPool.catalogRepositoryId !== remote.value.catalogRepositoryId
-            || localMemberIds !== remoteMemberIds;
+            || localPool.repositories.some((member) => {
+                const remoteMember = remote.value.members.find((candidate) => (
+                    String(candidate.githubRepositoryId) === String(member.githubRepositoryId)
+                ));
+                return !remoteMember
+                    || remoteMember.repositoryId !== member.repositoryId
+                    || remoteMember.repo !== member.repo;
+            });
         if (needsAdoption) {
             repositoryPool.adoptRemoteDescriptor(config, remote.value, catalogContext.githubRepositoryId);
             await saveConfig(config);
@@ -1589,6 +1587,14 @@ async function readPoolDescriptorSnapshot(config, { allowStale = true } = {}) {
 function updateLocalMemberState(config, repositoryId, state) {
     const local = config.__poolConfig?.repositories?.find((member) => member.repositoryId === repositoryId);
     if (local) local.lastKnownState = state;
+}
+
+function descriptorForConfiguredMembers(config, descriptor) {
+    const configuredIds = new Set((config.__poolConfig?.repositories || []).map((member) => member.repositoryId));
+    return {
+        ...descriptor,
+        members: descriptor.members.filter((member) => configuredIds.has(member.repositoryId)),
+    };
 }
 
 async function inspectReadableMember(config, descriptor, member) {
@@ -1632,7 +1638,8 @@ async function inspectReadableMember(config, descriptor, member) {
 
 async function listPoolBackups(config, { allowStale = true, requireComplete = false } = {}) {
     const snapshot = await readPoolDescriptorSnapshot(config, { allowStale });
-    const activeMembers = snapshot.descriptor.members.filter((member) => member.membershipState === 'active');
+    const descriptor = descriptorForConfiguredMembers(config, snapshot.descriptor);
+    const activeMembers = descriptor.members.filter((member) => member.membershipState === 'active');
     const settled = await Promise.all(activeMembers.map(async (member) => {
         try {
             return await inspectReadableMember(config, snapshot.descriptor, member);
@@ -1663,7 +1670,7 @@ async function listPoolBackups(config, { allowStale = true, requireComplete = fa
 
 async function resolveBackupSourceConfig(config, repositoryId, { allowStale = true } = {}) {
     const snapshot = await readPoolDescriptorSnapshot(config, { allowStale });
-    const resolved = repositoryPool.resolveReadableMember(config, snapshot.descriptor, repositoryId);
+    const resolved = repositoryPool.resolveReadableMember(config, descriptorForConfiguredMembers(config, snapshot.descriptor), repositoryId);
     return {
         config: repositoryPool.bindRuntimeConfigToMember(config, resolved.member.repositoryId),
         repositoryId: resolved.member.repositoryId,
@@ -1723,6 +1730,39 @@ async function addPoolMember(config, { repo, token }) {
             store.readDescriptor(memberContext),
             listReleasesForContext(config, memberContext),
         ]);
+        const remoteMember = remoteDescriptor.exists
+            ? remoteDescriptor.value.members.find((member) => (
+                String(member.githubRepositoryId) === verified.githubRepositoryId
+            ))
+            : null;
+        if (remoteMember && remoteMember.membershipState === 'active' && marker.exists) {
+            repositoryPool.validateMemberMarker(marker.value, {
+                poolId: remoteDescriptor.value.poolId,
+                repositoryId: remoteMember.repositoryId,
+                githubRepositoryId: remoteMember.githubRepositoryId,
+                catalogRepositoryId: remoteDescriptor.value.catalogRepositoryId,
+            });
+            const localCatalog = config.__poolConfig.repositories.find((member) => (
+                member.repositoryId === config.__poolConfig.catalogRepositoryId
+            ));
+            if (localCatalog && !localCatalog.tokenOverride && config.__poolConfig.defaultToken) {
+                localCatalog.tokenOverride = config.__poolConfig.defaultToken;
+            }
+            const adoptedLocal = repositoryPool.repositoryMember({
+                ...remoteMember,
+                tokenOverride: trimToEmpty(token) || trimToEmpty(config.token),
+            });
+            config.__poolConfig.repositories.push(adoptedLocal);
+            repositoryPool.adoptRemoteDescriptor(config, remoteDescriptor.value, verified.githubRepositoryId);
+            config.__poolConfig.descriptorCache.sha = remoteDescriptor.sha;
+            await saveConfig(config);
+            return {
+                member: remoteMember,
+                adopted: true,
+                resumed: false,
+                mirrorResults: [],
+            };
+        }
         if (marker.exists || remoteDescriptor.exists || releases.some((release) => (
             release.tag_name?.startsWith(RELEASE_TAG_PREFIX) || isChunkStoreRelease(release)
         ))) {
@@ -1845,6 +1885,55 @@ async function cancelPendingPoolMember(config, repositoryId) {
     cachePoolDescriptor(config, cancelled.descriptor, cancelled.sha);
     await saveConfig(config);
     return { repositoryId, cancelled: true };
+}
+
+async function removeLocalPoolMember(config, repositoryId) {
+    const pool = config.__poolConfig;
+    const member = pool?.repositories?.find((candidate) => candidate.repositoryId === repositoryId);
+    if (!member || !member.repo) throw buildError('本机没有这个仓库配置。', 404);
+
+    const cachedDescriptor = pool.descriptorCache?.descriptor;
+    const currentLane = cachedDescriptor && repositoryPool.findLane(cachedDescriptor, {
+        backupRoot: config.backupRoot,
+        deviceId: config.deviceId,
+        deviceName: config.deviceName,
+    });
+    const currentSegment = currentLane?.lane?.segments?.at(-1);
+    if (currentSegment?.repositoryId === repositoryId) {
+        throw buildError('请先切换当前写入仓库后再删除。', 409);
+    }
+
+    if (pool.repositories.filter((candidate) => candidate.repo).length === 1) {
+        const reset = runtimeConfigFromPersisted(repositoryPool.buildV2ConfigFromLegacy({
+            ...DEFAULT_CONFIG,
+            backupRoot: config.backupRoot,
+            deviceId: config.deviceId,
+            deviceName: config.deviceName,
+            lastBackupAt: config.lastBackupAt,
+            autoBackupEnabled: config.autoBackupEnabled,
+            autoBackupIntervalMinutes: config.autoBackupIntervalMinutes,
+            autoBackupKeepCount: config.autoBackupKeepCount,
+            manualBackupKeepCount: config.manualBackupKeepCount,
+        }, { idFactory: createId }));
+        await saveConfig(reset);
+        clearAutoBackupTimer();
+        return { repositoryId, removed: true, empty: true, remoteChanged: false };
+    }
+
+    pool.repositories = pool.repositories.filter((candidate) => candidate.repositoryId !== repositoryId);
+    if (pool.catalogRepositoryId === repositoryId) {
+        const replacement = pool.repositories.find((candidate) => (
+            candidate.repo && candidate.membershipState === 'active'
+        ));
+        if (!replacement) throw buildError('没有可用的本机仓库可接替主仓库。', 409);
+        pool.catalogRepositoryId = replacement.repositoryId;
+        config.catalogRepositoryId = replacement.repositoryId;
+        config.repo = replacement.repo;
+        config.token = replacement.tokenOverride || pool.defaultToken;
+    }
+    config.repositories = pool.repositories;
+    await saveConfig(config);
+    return { repositoryId, removed: true, empty: false, remoteChanged: false };
 }
 
 function assertBackupSource(meta, repositoryId) {
@@ -2921,7 +3010,7 @@ async function reserveBackupMember(config, catalogState, options = {}) {
     }
 
     if (!resolved.reservation) {
-        const candidates = descriptor.members.filter((member) => {
+        const candidates = descriptorForConfiguredMembers(config, descriptor).members.filter((member) => {
             try {
                 repositoryPool.resolveWriteEligibleMember(config, descriptor, member.repositoryId);
                 return true;
@@ -3110,7 +3199,8 @@ function summarizeChunkAssets(assets) {
 
 async function getSpaceStats(config) {
     const snapshot = await readPoolDescriptorSnapshot(config);
-    const activeMembers = snapshot.descriptor.members.filter((member) => member.membershipState === 'active');
+    const activeMembers = descriptorForConfiguredMembers(config, snapshot.descriptor).members
+        .filter((member) => member.membershipState === 'active');
     const memberResults = await Promise.all(activeMembers.map(async (member) => {
         try {
             const bound = repositoryPool.bindRuntimeConfigToMember(config, member.repositoryId);
@@ -3322,7 +3412,8 @@ async function readOrphanLedger() {
 
 async function runPoolGarbageCollection(config) {
     const snapshot = await readPoolDescriptorSnapshot(config, { allowStale: false });
-    const activeMembers = snapshot.descriptor.members.filter((member) => member.membershipState === 'active');
+    const activeMembers = descriptorForConfiguredMembers(config, snapshot.descriptor).members
+        .filter((member) => member.membershipState === 'active');
     const scans = await Promise.all(activeMembers.map(async (member) => {
         const bound = repositoryPool.bindRuntimeConfigToMember(config, member.repositoryId);
         await inspectReadableMember(config, snapshot.descriptor, member);
@@ -3632,8 +3723,12 @@ const plugin = {
         }));
 
         router.delete('/pool/members/:repositoryId', asyncRoute(async (req, res) => {
-            const result = await withExclusiveOperation('正在取消仓库加入', async () => {
+            const localOnly = req.body?.localOnly === true;
+            const result = await withExclusiveOperation(localOnly ? '正在删除本机仓库配置' : '正在取消仓库加入', async () => {
                 const config = await readConfig();
+                if (localOnly) {
+                    return await removeLocalPoolMember(config, trimToEmpty(req.params.repositoryId));
+                }
                 ensureConfigured(config);
                 return await cancelPendingPoolMember(config, trimToEmpty(req.params.repositoryId));
             });
