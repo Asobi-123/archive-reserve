@@ -73,6 +73,13 @@ test('segment switch requires the expected active segment', () => {
     assert.match(app, /result\?\.ready === false/);
 });
 
+test('member activation and segment switches only synchronize locally configured members', () => {
+    assert.match(server, /descriptorForConfiguredMembers\(config, activated\.descriptor\)\.members/);
+    assert.match(server, /descriptorForConfiguredMembers\(config, updated\.descriptor\)\.members/);
+    assert.doesNotMatch(server, /const contexts = activated\.descriptor\.members/);
+    assert.doesNotMatch(server, /const contexts = updated\.descriptor\.members/);
+});
+
 test('create backup view reflects the current lane repository', () => {
     assert.match(html, /id="backup-repository-label"/);
     assert.match(html, /id="backup-repository-hint"/);

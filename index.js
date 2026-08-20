@@ -33,7 +33,7 @@ const info = {
     id: 'archive-reserve',
     name: 'Archive Reserve',
     description: '完整打包 SillyTavern data，并存入 GitHub Releases，支持整包或按路径恢复。',
-    version: '0.3.2',
+    version: '0.3.3',
 };
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
@@ -1802,7 +1802,7 @@ async function addPoolMember(config, { repo, token }) {
     const activated = await store.updateDescriptor(catalogContext, { type: 'activate-member', repositoryId: memberId });
     local.membershipState = 'active';
     cachePoolDescriptor(config, activated.descriptor, activated.sha);
-    const contexts = activated.descriptor.members
+    const contexts = descriptorForConfiguredMembers(config, activated.descriptor).members
         .filter((member) => member.membershipState === 'active')
         .map((member) => repositoryPool.resolveMemberContext(config, member.repositoryId));
     const mirrorResults = await store.syncDescriptorMirrors(contexts, activated.descriptor);
@@ -1844,7 +1844,7 @@ async function switchPoolLane(config, { laneId, repositoryId, expectedSegmentId 
         },
     });
     cachePoolDescriptor(config, updated.descriptor, updated.sha);
-    const contexts = updated.descriptor.members
+    const contexts = descriptorForConfiguredMembers(config, updated.descriptor).members
         .filter((member) => member.membershipState === 'active')
         .map((member) => repositoryPool.resolveMemberContext(config, member.repositoryId));
     const mirrorResults = await store.syncDescriptorMirrors(contexts, updated.descriptor);
