@@ -128,6 +128,21 @@ Expected:
 - Deleting a row removes only that repository from this device's local configuration.
 - The deleted repository and its backups remain unchanged on GitHub and can be manually added again later.
 
+## 5D. Switch With Remote-Only Members
+
+Steps:
+
+1. Use a pool with at least three active repositories.
+2. On this device, configure only two of them. Leave the third repository unconfigured locally.
+3. Switch the current backup root from one configured repository to the other.
+4. Refresh the page and create a backup in the selected repository.
+
+Expected:
+
+- The switch succeeds without an `Unknown repository member` error.
+- The unconfigured remote repository does not appear in this device's repository list.
+- The selected repository is available after refresh and accepts the backup.
+
 ## 5B. Partial Repository Read
 
 Steps:
@@ -269,7 +284,7 @@ Expected:
 
 Before tagging a release:
 
-- `package.json`, `package-lock.json`, and the plugin info endpoint report `0.3.2`.
+- `package.json`, `package-lock.json`, and the plugin info endpoint report `0.3.3`.
 - `README.md` and `README_EN.md` describe the current install path and UI entry correctly.
 - `CHANGELOG.md` includes the release entry and date.
 - The first-repository flow, two-repository switching, cross-device adoption, combined archive library, restore flow, download flow, maintenance breakdown, incomplete-scan GC block, and auto backup have all been tested at least once.

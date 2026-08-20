@@ -7,6 +7,12 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-08-20
+
+### Fixed
+
+- Switching the write repository no longer fails when the shared pool contains repositories that are not configured on the current device.
+
 ## [0.3.2] - 2026-08-19
 
 ### Fixed

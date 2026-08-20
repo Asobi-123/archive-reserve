@@ -145,7 +145,7 @@ Shape:
   "createdAt": "2026-04-10T10:25:12.000Z",
   "plugin": {
     "id": "archive-reserve",
-    "version": "0.3.2"
+    "version": "0.3.3"
   },
   "device": {
     "id": "b7d4c1d74b834a5b8fa1c1ce49a5b8f2",
@@ -370,9 +370,9 @@ Shape:
 }
 ```
 
-## Repository Pool v1 Contract (Implemented In 0.3.0, Updated In 0.3.2)
+## Repository Pool v1 Contract (Implemented In 0.3.0, Updated In 0.3.3)
 
-This section describes the repository-pool contract implemented by the 0.3.2 runtime.
+This section describes the repository-pool contract implemented by the 0.3.3 runtime.
 
 ### Authority And Persistence
 
@@ -380,6 +380,7 @@ This section describes the repository-pool contract implemented by the 0.3.2 run
 - Member descriptor copies are repairable mirrors. Local descriptor data is a cache.
 - When a user enters a repository that belongs to an existing remote pool, its immutable GitHub repository ID and marker are validated before that one member is adopted locally. The remote descriptor is read as identity and lane metadata, but its other members are never imported automatically.
 - Local configuration is an explicit allowlist. Listing, source resolution, space statistics, garbage collection, and new-lane selection operate only on locally configured members.
+- Member activation and write-repository switching synchronize descriptor mirrors only to locally configured active members. Remote-only members never need local credentials and cannot block either operation.
 - Deleting a repository row is local-only. It never deletes or edits the GitHub repository, releases, marker, mirror, or remote catalog descriptor.
 - A stale local cache may support explicitly marked read-only listing, download, health check, and user-selected restore.
 - Backup creation, member admission, segment switching, backup deletion, retention, and GC require a fresh catalog descriptor.

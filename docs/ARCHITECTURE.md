@@ -174,6 +174,8 @@ The catalog descriptor is the authority for pool membership and backup lane segm
 
 Every backup-specific read is bound to one member context before the release id is resolved. This prevents a release id collision in another repository from selecting the wrong metadata or chunk-store assets.
 
+After member activation or a write-repository switch, mirror synchronization is limited to members configured on the current device. Remote-only members remain part of the pool but never require local credentials or block the operation.
+
 ### Selected-path restore downloads only matching chunks
 
 The plugin does not always download the whole archive to restore one folder.
